@@ -77,7 +77,7 @@ The node outputs:
 ## 关于我 | About me
 
 Bilibili：[我的B站主页](https://space.bilibili.com/498399023?spm_id_from=333.1007.0.0)
-QQ群：3260561522
+QQ号 3260561522
 wechat微信: DLONG189one
 
 
