@@ -74,4 +74,12 @@ The node outputs:
    - ![image](https://github.com/user-attachments/assets/ea17cb1d-d429-47cd-b907-eb03641c186e)
    - ![image](https://github.com/user-attachments/assets/2fef7f46-9829-496f-aa58-8cdf283e4f7e)
 
+## 关于我 | About me
+
+Bilibili：[我的B站主页](https://space.bilibili.com/498399023?spm_id_from=333.1007.0.0)
+QQ群：3260561522
+wechat微信: DLONG189one
+
+欢迎赞助投喂
+
 
