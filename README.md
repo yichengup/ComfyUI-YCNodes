@@ -19,7 +19,7 @@ Advanced image combination node, adding the following features to the basic vers
 - Independent scaling control
 - Additional output options
 
-## This two node provides advanced image combination functions, designed for IClora and fill+redux partial redraw migration images. Optimize the combination of two graphs, save the size of Flux iclora and Fill+redux when partial redrawing, and save computing power.
+### This two node provides advanced image combination functions, designed for IClora and fill+redux partial redraw migration images. Optimize the combination of two graphs, save the size of Flux iclora and Fill+redux when partial redrawing, and save computing power.
 
 ## How to Use
 
