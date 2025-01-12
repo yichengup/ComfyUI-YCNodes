@@ -2,6 +2,10 @@ import torch
 import numpy as np
 import cv2
 
+def screen_blend(mask1, mask2):
+    """滤色模式混合两个遮罩"""
+    return 255 - ((255 - mask1.astype(float)) * (255 - mask2.astype(float)) / 255)
+
 def resize_with_aspect_ratio(img, target_size, target_dim='width', interpolation=cv2.INTER_CUBIC):
     """等比例缩放图片"""
     h, w = img.shape[:2]
@@ -124,16 +128,20 @@ class ImageIC:
         # 确定基准图和第二张图
         if reference_edge.startswith('image1'):
             base_image = image1
-            base_mask = first_mask[0].numpy() if first_mask is not None else np.zeros((h1, w1))
+            base_mask = first_mask[0].numpy() if first_mask is not None else np.zeros((h1, w1), dtype=np.float32)
             second_img = image2
-            second_img_mask = second_mask[0].numpy() if second_mask is not None else np.zeros((h2, w2))
+            second_img_mask = second_mask[0].numpy() if second_mask is not None else np.zeros((h2, w2), dtype=np.float32)
             target_size = w1 if reference_edge.endswith('width') else h1
         else:
             base_image = image2
-            base_mask = second_mask[0].numpy() if second_mask is not None else np.zeros((h2, w2))
+            base_mask = second_mask[0].numpy() if second_mask is not None else np.zeros((h2, w2), dtype=np.float32)
             second_img = image1
-            second_img_mask = first_mask[0].numpy() if first_mask is not None else np.zeros((h1, w1))
+            second_img_mask = first_mask[0].numpy() if first_mask is not None else np.zeros((h1, w1), dtype=np.float32)
             target_size = w2 if reference_edge.endswith('width') else h2
+
+        # 将遮罩转换为0-255范围用于处理
+        base_mask_255 = (base_mask * 255).astype(np.uint8)
+        second_img_mask_255 = (second_img_mask * 255).astype(np.uint8)
 
         # 转换背景颜色
         if background_color.startswith('#'):
@@ -151,6 +159,9 @@ class ImageIC:
             new_h = int(h * second_image_scale)
             scaled_second = cv2.resize(scaled_second, (new_w, new_h))
             scaled_second_mask = cv2.resize(scaled_second_mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+        
+        # 将缩放后的遮罩转换为255范围
+        scaled_second_mask_255 = (scaled_second_mask * 255).astype(np.uint8)
 
         # 获取最终尺寸
         base_h, base_w = base_image.shape[:2]
@@ -172,7 +183,7 @@ class ImageIC:
         y1 = (canvas_h - base_h) // 2 if combine_mode == "horizontal" else 0
         x1 = 0
         final_canvas[y1:y1+base_h, x1:x1+base_w] = base_image
-        final_mask[y1:y1+base_h, x1:x1+base_w] = base_mask
+        final_mask[y1:y1+base_h, x1:x1+base_w] = base_mask_255
 
         # 创建第二张图片的画布
         if combine_mode == "horizontal":
@@ -209,15 +220,21 @@ class ImageIC:
         
         # 放置第二张图片
         second_canvas[y:y+scaled_second.shape[0], x:x+scaled_second.shape[1]] = scaled_second
-        second_mask_canvas[y:y+scaled_second.shape[0], x:x+scaled_second.shape[1]] = scaled_second_mask
+        second_mask_canvas[y:y+scaled_second.shape[0], x:x+scaled_second.shape[1]] = scaled_second_mask_255
 
         # 将第二张图片放入最终画布
         if combine_mode == "horizontal":
             final_canvas[:, x_offset:] = second_canvas
-            final_mask[:, x_offset:] = second_mask_canvas
+            # 使用滤色模式合并遮罩
+            second_mask_area = np.zeros_like(final_mask)
+            second_mask_area[:, x_offset:] = second_mask_canvas
+            final_mask = screen_blend(final_mask, second_mask_area).astype(np.uint8)
         else:
             final_canvas[y_offset:, :] = second_canvas
-            final_mask[y_offset:, :] = second_mask_canvas
+            # 使用滤色模式合并遮罩
+            second_mask_area = np.zeros_like(final_mask)
+            second_mask_area[y_offset:, :] = second_mask_canvas
+            final_mask = screen_blend(final_mask, second_mask_area).astype(np.uint8)
 
         # 最终尺寸调整
         if combine_mode == "horizontal":
@@ -262,6 +279,13 @@ class ImageIC:
         # 转换为 torch tensor
         final_canvas = final_canvas.astype(np.float32) / 255.0
         final_canvas = torch.from_numpy(final_canvas)[None,]
+        
+        # 将遮罩转换为float32类型，保持0-1范围
+        final_mask = final_mask.astype(np.float32) / 255.0
+        first_separate_mask = first_separate_mask.astype(np.float32) / 255.0
+        second_separate_mask = second_separate_mask.astype(np.float32) / 255.0
+        
+        # 转换为tensor
         final_mask = torch.from_numpy(final_mask)[None,]
         first_separate_mask = torch.from_numpy(first_separate_mask)[None,]
         second_separate_mask = torch.from_numpy(second_separate_mask)[None,]
