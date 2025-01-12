@@ -109,16 +109,20 @@ class ImageICAdvanced:
         second_img = image2 if is_first_main else image1
         main_h, main_w = main_image.shape[:2]
         
-        # 处理遮罩
+        # 处理遮罩 - 确保遮罩值在0-1之间
         if first_mask is None:
-            first_mask = np.zeros((h1, w1), dtype=np.uint8)
+            first_mask = np.zeros((h1, w1), dtype=np.float32)
         else:
-            first_mask = first_mask[0].numpy()
+            first_mask = first_mask[0].numpy()  # 已经是0-1范围的浮点数
 
         if second_mask is None:
-            second_mask = np.zeros((h2, w2), dtype=np.uint8)
+            second_mask = np.zeros((h2, w2), dtype=np.float32)
         else:
-            second_mask = second_mask[0].numpy()
+            second_mask = second_mask[0].numpy()  # 已经是0-1范围的浮点数
+
+        # 将遮罩转换为0-255范围用于处理
+        first_mask_255 = (first_mask * 255).astype(np.uint8)
+        second_mask_255 = (second_mask * 255).astype(np.uint8)
 
         main_mask = first_mask if is_first_main else second_mask
         second_mask = second_mask if is_first_main else first_mask
@@ -142,6 +146,9 @@ class ImageICAdvanced:
             new_h = int(h * second_image_scale)
             scaled_second = cv2.resize(scaled_second, (new_w, new_h))
             scaled_second_mask = cv2.resize(scaled_second_mask, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+        # 将缩放后的遮罩转换为255范围
+        scaled_second_mask_255 = (scaled_second_mask * 255).astype(np.uint8)
 
         # 创建画布
         if combine_mode == "overlay":
@@ -170,10 +177,10 @@ class ImageICAdvanced:
         main_region_mask[y1:y1+main_h, x1:x1+main_w] = 255
         if is_first_main:
             first_separate_mask = main_region_mask.copy()
-            final_mask[y1:y1+main_h, x1:x1+main_w] = main_mask
+            final_mask[y1:y1+main_h, x1:x1+main_w] = first_mask_255
         else:
             second_separate_mask = main_region_mask.copy()
-            final_mask[y1:y1+main_h, x1:x1+main_w] = main_mask
+            final_mask[y1:y1+main_h, x1:x1+main_w] = second_mask_255
 
         # 放置第二张图片
         h2, w2 = scaled_second.shape[:2]
@@ -211,17 +218,15 @@ class ImageICAdvanced:
         if is_first_main:
             second_separate_mask = second_region_mask.copy()
             # 使用滤色模式合并遮罩
-            final_mask[y2:y2+h2, x2:x2+w2] = screen_blend(
-                final_mask[y2:y2+h2, x2:x2+w2],
-                scaled_second_mask
-            ).astype(np.uint8)
+            second_mask_area = np.zeros_like(final_mask)
+            second_mask_area[y2:y2+h2, x2:x2+w2] = scaled_second_mask_255
+            final_mask = screen_blend(final_mask, second_mask_area).astype(np.uint8)
         else:
             first_separate_mask = second_region_mask.copy()
             # 使用滤色模式合并遮罩
-            final_mask[y2:y2+h2, x2:x2+w2] = screen_blend(
-                final_mask[y2:y2+h2, x2:x2+w2],
-                scaled_second_mask
-            ).astype(np.uint8)
+            first_mask_area = np.zeros_like(final_mask)
+            first_mask_area[y2:y2+h2, x2:x2+w2] = scaled_second_mask_255
+            final_mask = screen_blend(final_mask, first_mask_area).astype(np.uint8)
 
         # 找到有效内容区域
         content_mask = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
@@ -296,6 +301,13 @@ class ImageICAdvanced:
         # 转换为tensor格式
         final_canvas = final_canvas.astype(np.float32) / 255.0
         final_canvas = torch.from_numpy(final_canvas)[None,]
+        
+        # 将遮罩转换为float32类型，保持0-1范围
+        final_mask = final_mask.astype(np.float32) / 255.0
+        first_separate_mask = first_separate_mask.astype(np.float32) / 255.0
+        second_separate_mask = second_separate_mask.astype(np.float32) / 255.0
+        
+        # 转换为tensor
         final_mask = torch.from_numpy(final_mask)[None,]
         first_separate_mask = torch.from_numpy(first_separate_mask)[None,]
         second_separate_mask = torch.from_numpy(second_separate_mask)[None,]
