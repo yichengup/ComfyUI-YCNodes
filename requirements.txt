@@ -1,0 +1,4 @@
+torch         
+numpy        
+PIL         
+cv2    # OpenCV图像处理库
