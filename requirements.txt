@@ -1,4 +1,4 @@
 torch         
 numpy        
 pillow        
-opencv-python    # OpenCV图像处理库
+cv2    # OpenCV图像处理库
