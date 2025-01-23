@@ -1,4 +1,4 @@
 torch         
 numpy        
-PIL         
+pillow        
 cv2    # OpenCV图像处理库
