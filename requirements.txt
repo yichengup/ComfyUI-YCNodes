@@ -1,4 +1,4 @@
 torch         
 numpy        
 pillow        
-cv2    
+opencv-python    
