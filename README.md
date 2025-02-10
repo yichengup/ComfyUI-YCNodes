@@ -1,4 +1,4 @@
-# Comfyui-yicheng-node
+# ComfyUI-YCNodes
 
 A collection of image processing extension nodes for ComfyUI.
 
