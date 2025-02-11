@@ -109,23 +109,35 @@ class ImageICAdvanced:
         second_img = image2 if is_first_main else image1
         main_h, main_w = main_image.shape[:2]
         
-        # 处理遮罩 - 确保遮罩值在0-1之间
-        if first_mask is None:
+        # 验证并处理第一个遮罩
+        if first_mask is not None:
+            mask1_h, mask1_w = first_mask[0].shape
+            if mask1_h != h1 or mask1_w != w1:
+                # 如果尺寸不匹配，创建新的空遮罩
+                first_mask = np.zeros((h1, w1), dtype=np.float32)
+            else:
+                first_mask = first_mask[0].numpy()
+        else:
             first_mask = np.zeros((h1, w1), dtype=np.float32)
-        else:
-            first_mask = first_mask[0].numpy()  # 已经是0-1范围的浮点数
 
-        if second_mask is None:
-            second_mask = np.zeros((h2, w2), dtype=np.float32)
+        # 验证并处理第二个遮罩
+        if second_mask is not None:
+            mask2_h, mask2_w = second_mask[0].shape
+            if mask2_h != h2 or mask2_w != w2:
+                # 如果尺寸不匹配，创建新的空遮罩
+                second_mask = np.zeros((h2, w2), dtype=np.float32)
+            else:
+                second_mask = second_mask[0].numpy()
         else:
-            second_mask = second_mask[0].numpy()  # 已经是0-1范围的浮点数
+            second_mask = np.zeros((h2, w2), dtype=np.float32)
+
+        # 确定主遮罩和次遮罩
+        main_mask = first_mask if is_first_main else second_mask
+        second_mask = second_mask if is_first_main else first_mask
 
         # 将遮罩转换为0-255范围用于处理
         first_mask_255 = (first_mask * 255).astype(np.uint8)
         second_mask_255 = (second_mask * 255).astype(np.uint8)
-
-        main_mask = first_mask if is_first_main else second_mask
-        second_mask = second_mask if is_first_main else first_mask
 
         # 转换背景颜色
         if background_color.startswith('#'):
