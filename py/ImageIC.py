@@ -125,18 +125,38 @@ class ImageIC:
         h1, w1 = image1.shape[:2]
         h2, w2 = image2.shape[:2]
 
+        # 验证并处理第一个遮罩
+        if first_mask is not None:
+            mask1_h, mask1_w = first_mask[0].shape
+            if mask1_h != h1 or mask1_w != w1:
+                # 如果尺寸不匹配，创建新的空遮罩
+                base_mask = np.zeros((h1, w1), dtype=np.float32)
+            else:
+                base_mask = first_mask[0].numpy()
+        else:
+            base_mask = np.zeros((h1, w1), dtype=np.float32)
+
+        # 验证并处理第二个遮罩
+        if second_mask is not None:
+            mask2_h, mask2_w = second_mask[0].shape
+            if mask2_h != h2 or mask2_w != w2:
+                # 如果尺寸不匹配，创建新的空遮罩
+                second_img_mask = np.zeros((h2, w2), dtype=np.float32)
+            else:
+                second_img_mask = second_mask[0].numpy()
+        else:
+            second_img_mask = np.zeros((h2, w2), dtype=np.float32)
+
         # 确定基准图和第二张图
         if reference_edge.startswith('image1'):
             base_image = image1
-            base_mask = first_mask[0].numpy() if first_mask is not None else np.zeros((h1, w1), dtype=np.float32)
             second_img = image2
-            second_img_mask = second_mask[0].numpy() if second_mask is not None else np.zeros((h2, w2), dtype=np.float32)
             target_size = w1 if reference_edge.endswith('width') else h1
         else:
             base_image = image2
-            base_mask = second_mask[0].numpy() if second_mask is not None else np.zeros((h2, w2), dtype=np.float32)
+            # 交换遮罩
+            base_mask, second_img_mask = second_img_mask, base_mask
             second_img = image1
-            second_img_mask = first_mask[0].numpy() if first_mask is not None else np.zeros((h1, w1), dtype=np.float32)
             target_size = w2 if reference_edge.endswith('width') else h2
 
         # 将遮罩转换为0-255范围用于处理
