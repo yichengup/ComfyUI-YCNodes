@@ -22,7 +22,7 @@ class ImageUpscaleTiled:
     
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "upscale_tiled"
-    CATEGORY = "YiCheng/Image"
+    CATEGORY = "YCNode/Image"
 
     def upscale_tiled(self, image, model_name, rows, cols, overlap):
         device = model_management.get_torch_device()
