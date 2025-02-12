@@ -18,7 +18,7 @@ class ImageMirror:
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "mirror_image"
-    CATEGORY = "YiCheng/Image"
+    CATEGORY = "YCNode/Image"
 
     def mirror_image(self, image, mirror_type):
         # 确保输入是正确的格式
