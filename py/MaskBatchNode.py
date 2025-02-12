@@ -25,7 +25,7 @@ class MaskFromBatch:
     RETURN_TYPES = ("MASK",)
     RETURN_NAMES = ("selected_masks",)
     FUNCTION = "batch_select"
-    CATEGORY = "YiCheng/Mask/Batch"
+    CATEGORY = "YCNode/Mask/Batch"
 
     def batch_select(self, masks, batch_index, length):
         # 确保mask是正确的形状
@@ -63,7 +63,7 @@ class MaskRepeatBatch:
     RETURN_TYPES = ("MASK",)
     RETURN_NAMES = ("repeated_masks",)
     FUNCTION = "repeat"
-    CATEGORY = "YiCheng/Mask/Batch"
+    CATEGORY = "YCNode/Mask/Batch"
 
     def repeat(self, masks, amount):
         # 确保mask是正确的形状
@@ -88,7 +88,7 @@ class MaskBatchCopy:
     RETURN_TYPES = ("MASK", "MASK")
     RETURN_NAMES = ("masks_1", "masks_2")
     FUNCTION = "copy"
-    CATEGORY = "YiCheng/Mask/Batch"
+    CATEGORY = "YCNode/Mask/Batch"
 
     def copy(self, masks):
         # 确保mask是正确的形状
@@ -115,7 +115,7 @@ class MaskBatchComposite:
     RETURN_TYPES = ("MASK",)
     RETURN_NAMES = ("combined_masks",)
     FUNCTION = "combine"
-    CATEGORY = "YiCheng/Mask/Batch"
+    CATEGORY = "YCNode/Mask/Batch"
 
     def combine(self, masks_1, masks_2):
         # 确保两个mask都是正确的形状
