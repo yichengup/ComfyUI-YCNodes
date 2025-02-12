@@ -28,7 +28,7 @@ class MaskTopNFilter:
     RETURN_TYPES = ("MASK",)  # 只返回过滤后的mask
     RETURN_NAMES = ("filtered_mask",)
     FUNCTION = "filter_mask"
-    CATEGORY = "YiCheng/Mask"
+    CATEGORY = "YCNode/Mask"
 
     def filter_mask(self, mask, keep_top_n):
         # 1. 处理输入mask
