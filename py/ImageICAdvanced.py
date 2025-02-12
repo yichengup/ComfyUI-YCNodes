@@ -90,7 +90,7 @@ class ImageICAdvanced:
     RETURN_TYPES = ("IMAGE", "MASK", "MASK", "MASK", "IMAGE", "TUPLE", "TUPLE")
     RETURN_NAMES = ("IMAGE", "MASK", "FIRST_MASK", "SECOND_MASK", "MAIN_IMAGE", "first_size", "second_size")
     FUNCTION = "combine_images"
-    CATEGORY = "YiCheng/Image"
+    CATEGORY = "YCNode/Image"
 
     def combine_images(self, first_image, second_image, reference_edge, combine_mode, 
                       second_image_scale, position_type, x_position, y_position, final_size, background_color,
