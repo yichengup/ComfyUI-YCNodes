@@ -146,7 +146,7 @@ class ImageBlendResize:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("image",)
     FUNCTION = "blend_resize"
-    CATEGORY = "YiCheng/Image"
+    CATEGORY = "YCNode/Image"
 
     def blend_resize(self, background_image, layer_image, blend_mode, resize_mode, 
                     scale, x_pos, y_pos, rotation, opacity, invert_mask, layer_mask=None):
