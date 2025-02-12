@@ -20,7 +20,7 @@ class ImageMosaic:
     
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "apply_mosaic"
-    CATEGORY = "YiCheng/Image"
+    CATEGORY = "YCNode/Image"
 
     def apply_mosaic(self, image, mosaic_size):
         # 将图像转换为numpy数组
