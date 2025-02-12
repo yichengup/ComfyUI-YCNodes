@@ -42,7 +42,7 @@ class ImageLoaderAdvanced:
 
     RETURN_TYPES = ("IMAGE", "MASK")
     FUNCTION = "load_image"
-    CATEGORY = "YiCheng/Image"
+    CATEGORY = "YCNode/Image"
     
     INPUT_IS_LIST = False
     OUTPUT_IS_LIST = (False, False)
