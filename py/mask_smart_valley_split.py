@@ -18,7 +18,7 @@ class MaskSmartValleySplit:
 
     RETURN_TYPES = ("MASK",)
     FUNCTION = "smart_split"
-    CATEGORY = "YiCheng/Mask"
+    CATEGORY = "YCNode/Mask"
 
     def check_connectivity(self, mask):
         """检查mask是否已经分离"""
