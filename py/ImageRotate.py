@@ -17,7 +17,7 @@ class ImageRotate:
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "rotate_image"
-    CATEGORY = "YiCheng/Image"
+    CATEGORY = "YCNode/Image"
 
     def rotate_image(self, image, angle):
         # 确保输入是正确的格式
