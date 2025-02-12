@@ -21,7 +21,7 @@ class TextBeforeKeyword:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("processed_text",)
     FUNCTION = "process_text"
-    CATEGORY = "YiCheng/Text"
+    CATEGORY = "YCNode/Text"
 
     def process_text(self, text, keyword, case_sensitive=True):
         if not case_sensitive:
