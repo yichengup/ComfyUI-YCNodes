@@ -78,7 +78,7 @@ class MaskSplitFilter:
     RETURN_TYPES = ("MASK",)
     RETURN_NAMES = ("segmented_masks",)
     FUNCTION = "segment_mask"
-    CATEGORY = "YiCheng/Mask"
+    CATEGORY = "YCNode/Mask"
 
     def find_top_left_point(self, mask_np):
         """找到mask中最左上角的点"""
