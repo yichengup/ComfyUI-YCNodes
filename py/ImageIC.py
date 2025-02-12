@@ -112,7 +112,7 @@ class ImageIC:
     RETURN_TYPES = ("IMAGE", "MASK", "MASK", "MASK", "TUPLE", "TUPLE")
     RETURN_NAMES = ("IMAGE", "MASK", "FIRST_MASK", "SECOND_MASK", "first_size", "second_size")
     FUNCTION = "combine_images"
-    CATEGORY = "YiCheng/Image"
+    CATEGORY = "YCNode/Image"
 
     def combine_images(self, first_image, second_image, reference_edge, combine_mode, 
                       second_image_scale, second_image_position, final_size, background_color,
