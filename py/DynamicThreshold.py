@@ -13,7 +13,7 @@ class DynamicThreshold:
 
     RETURN_TYPES = ("FLOAT",)
     FUNCTION = "compare"
-    CATEGORY = "YiCheng/utils"
+    CATEGORY = "YCNode/utils"
 
     def compare(self, input_value):
         if 1 <= input_value <= 150:
