@@ -3,7 +3,7 @@
 A collection of image processing extension nodes for ComfyUI.
 
 ## Nodes Description
-
+### Image mirror, image rotate, image mosaic
 ### ImageSelector
 Multiple input images, select by custom name, select the specified image output (Ten fixed inputs)
 ### ImageBatchSelector
