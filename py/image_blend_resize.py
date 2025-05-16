@@ -11,8 +11,10 @@ BLEND_MODES = [
 
 # resize模式
 RESIZE_MODES = [
-    'contain',  # 等比缩放包含
-    'cover'     # 等比缩放覆盖
+    'contain',   # 等比缩放包含
+    'cover',     # 等比缩放覆盖
+    'fix_width', # 固定宽度，高度按比例调整
+    'fix_height' # 固定高度，宽度按比例调整
 ]
 
 # 对齐方式
@@ -59,22 +61,35 @@ def blend_images(bg, fg, mode='normal', opacity=100):
     result = bg * (1 - opacity) + result * opacity
     return np.clip(result, 0, 255).astype(np.uint8)
 
-def resize_and_position(image, target_size, resize_mode='contain', x_pos=50, y_pos=50, rotation=0, scale=100, bg_color=(0,0,0)):
+def resize_and_position(image, target_size, resize_mode='contain', x_pos=50, y_pos=50, rotation=0, scale=100, fixed_width=None, fixed_height=None, bg_color=(0,0,0)):
     """调整图像大小、位置和旋转"""
-    # 第一步：根据resize_mode调整大小
-    src_ratio = image.size[0] / image.size[1]
-    target_ratio = target_size[0] / target_size[1]
+    src_width, src_height = image.size
+    target_width, target_height = target_size
+    src_ratio = src_width / src_height
     
+    # 第一步：根据resize_mode调整大小
     if resize_mode == 'contain':
+        target_ratio = target_width / target_height
         if src_ratio > target_ratio:
-            new_size = (target_size[0], int(target_size[0] / src_ratio))
+            new_size = (target_width, int(target_width / src_ratio))
         else:
-            new_size = (int(target_size[1] * src_ratio), target_size[1])
-    else:  # cover
+            new_size = (int(target_height * src_ratio), target_height)
+    elif resize_mode == 'cover':
+        target_ratio = target_width / target_height
         if src_ratio > target_ratio:
-            new_size = (int(target_size[1] * src_ratio), target_size[1])
+            new_size = (int(target_height * src_ratio), target_height)
         else:
-            new_size = (target_size[0], int(target_size[0] / src_ratio))
+            new_size = (target_width, int(target_width / src_ratio))
+    elif resize_mode == 'fix_width':
+        # 固定宽度缩放，高度按原比例调整
+        fixed_w = fixed_width if fixed_width is not None else target_width
+        new_size = (fixed_w, int(fixed_w / src_ratio))
+    elif resize_mode == 'fix_height':
+        # 固定高度缩放，宽度按原比例调整
+        fixed_h = fixed_height if fixed_height is not None else target_height
+        new_size = (int(fixed_h * src_ratio), fixed_h)
+    else:
+        new_size = (target_width, target_height)  # 默认情况
     
     # 第二步：应用scale缩放
     scale_factor = scale / 100.0
@@ -140,6 +155,8 @@ class ImageBlendResize:
             },
             "optional": {
                 "layer_mask": ("MASK",),
+                "fixed_width": ("INT", {"default": 512, "min": 1, "max": 4096, "step": 1}),
+                "fixed_height": ("INT", {"default": 512, "min": 1, "max": 4096, "step": 1}),
             }
         }
 
@@ -149,7 +166,8 @@ class ImageBlendResize:
     CATEGORY = "YCNode/Image"
 
     def blend_resize(self, background_image, layer_image, blend_mode, resize_mode, 
-                    scale, x_pos, y_pos, rotation, opacity, invert_mask, layer_mask=None):
+                    scale, x_pos, y_pos, rotation, opacity, invert_mask, 
+                    layer_mask=None, fixed_width=None, fixed_height=None):
         # 处理batch
         b_images = []
         l_images = []
@@ -195,7 +213,8 @@ class ImageBlendResize:
             
             # 调整前景图大小、位置和旋转
             fg_resized, (x, y, w, h) = resize_and_position(
-                fg_pil, bg_pil.size, resize_mode, x_pos, y_pos, rotation, scale
+                fg_pil, bg_pil.size, resize_mode, x_pos, y_pos, rotation, scale,
+                fixed_width, fixed_height
             )
             
             # 同步处理mask
