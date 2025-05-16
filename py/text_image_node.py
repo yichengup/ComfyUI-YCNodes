@@ -46,7 +46,7 @@ class TextImageGenerator:
     
     RETURN_TYPES = ("IMAGE", "MASK")
     FUNCTION = "generate_text_image"
-    CATEGORY = "image/text"
+    CATEGORY = "YCNode/Text"
     
     def hex_to_rgb(self, hex_color):
         """将十六进制颜色转换为RGB值"""
