@@ -26,7 +26,7 @@ class IrregularToEllipseMask:
     RETURN_TYPES = ("MASK",)
     RETURN_NAMES = ("ellipse_mask",)
     FUNCTION = "convert_to_ellipse"
-    CATEGORY = "YCNode/Image"
+    CATEGORY = "YCNode/Mask"
 
     def convert_to_ellipse(self, mask, keep_region="largest", fill_holes="enable", smooth_edges="enable", 
                            smoothing_kernel_size=5, output_mode="ellipse", expand_mask=0, blur_amount=0.0):
