@@ -19,7 +19,7 @@ class IrregularToEllipseMask:
                 "smoothing_kernel_size": ("INT", {"default": 5, "min": 3, "max": 31, "step": 2}),
                 "output_mode": (["ellipse", "convex_hull", "filled_original"], {"default": "ellipse"}),
                 "expand_mask": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
-                "blur_amount": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 50.0, "step": 0.1}),
+                "blur_amount": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 100.0, "step": 0.1}),
             }
         }
 
