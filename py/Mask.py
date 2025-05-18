@@ -273,12 +273,67 @@ class MaskContourFillNode:
         
         return (filled_tensor,)
 
+class RemapMaskRange:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "mask": ("MASK",),
+                "min": ("FLOAT", {"default": 0.0,"min": -10.0, "max": 1.0, "step": 0.01}),
+                "max": ("FLOAT", {"default": 1.0,"min": 0.0, "max": 10.0, "step": 0.01}),
+            }
+        }
+
+    RETURN_TYPES = ("MASK",)
+    RETURN_NAMES = ("mask",)
+    FUNCTION = "remap"
+    CATEGORY = "YCNode/Mask"
+    DESCRIPTION = """
+Sets new min and max values for the mask.
+"""
+
+    def remap(self, mask, min, max):
+
+         # Find the maximum value in the mask
+        mask_max = torch.max(mask)
+        
+        # If the maximum mask value is zero, avoid division by zero by setting it to 1
+        mask_max = mask_max if mask_max > 0 else 1
+        
+        # Scale the mask values to the new range defined by min and max
+        # The highest pixel value in the mask will be scaled to max
+        scaled_mask = (mask / mask_max) * (max - min) + min
+        
+        # Clamp the values to ensure they are within [0.0, 1.0]
+        scaled_mask = torch.clamp(scaled_mask, min=0.0, max=1.0)
+        
+        return (scaled_mask, )
+
+
+def get_mask_polygon(self, mask_np):
+    import cv2
+    """Helper function to get polygon points from mask"""
+    # Find contours
+    contours, _ = cv2.findContours(mask_np, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        return None
+    
+    # Get the largest contour
+    largest_contour = max(contours, key=cv2.contourArea)
+    
+    # Approximate polygon
+    epsilon = 0.02 * cv2.arcLength(largest_contour, True)
+    polygon = cv2.approxPolyDP(largest_contour, epsilon, True)
+    
+    return polygon.squeeze()
 # 节点注册
 NODE_CLASS_MAPPINGS = {
     "MaskTopNFilter": MaskTopNFilter,
     "MaskSplitFilter": MaskSplitFilter,
     "MaskPreviewNode": MaskPreviewNode,
-    "MaskContourFillNode": MaskContourFillNode
+    "MaskContourFillNode": MaskContourFillNode,
+    "RemapMaskRange": RemapMaskRange
 }
 
 # 节点显示名称
@@ -286,5 +341,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MaskTopNFilter": "Mask Top-N Filter",
     "MaskSplitFilter": "Mask Split Filter",
     "MaskPreviewNode": "MaskPreview_YC",
-    "MaskContourFillNode": "MaskContourFill_YC"
+    "MaskContourFillNode": "MaskContourFill_YC",
+    "RemapMaskRange": "Remap Mask Range (YC)"
 }
