@@ -273,7 +273,7 @@ class MaskContourFillNode:
         
         return (filled_tensor,)
 
-class RemapMaskRange:
+class YCRemapMaskRange:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -333,7 +333,7 @@ NODE_CLASS_MAPPINGS = {
     "MaskSplitFilter": MaskSplitFilter,
     "MaskPreviewNode": MaskPreviewNode,
     "MaskContourFillNode": MaskContourFillNode,
-    "RemapMaskRange": RemapMaskRange
+    "YCRemapMaskRange": YCRemapMaskRange
 }
 
 # 节点显示名称
@@ -342,5 +342,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MaskSplitFilter": "Mask Split Filter",
     "MaskPreviewNode": "MaskPreview_YC",
     "MaskContourFillNode": "MaskContourFill_YC",
-    "RemapMaskRange": "Remap Mask Range (YC)"
+    "YCRemapMaskRange": "Remap Mask Range (YC)"
 }
