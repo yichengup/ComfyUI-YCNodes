@@ -326,6 +326,75 @@ class MaskConditionSwitch:
             
         return (output_mask, is_matched)
 
+class UniversalConditionGate:
+    """
+    通用条件开关 - 根据输入文本是否与预设文本相匹配来决定是否让输入通过
+    适用于任何数据类型，可作为任意节点之间的条件门控
+    """
+    
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        # 使用通用容器接受任何类型的输入
+        if is_advanced_model_supported():
+            return {
+                "required": {
+                    "input_text": ("STRING", {"default": "", "multiline": False, "tooltip": "输入文本，将与预设文本比较"}),
+                    "preset_text": ("STRING", {"default": "", "multiline": False, "tooltip": "预设文本，用于与输入文本比较"}),
+                    "case_sensitive": ("BOOLEAN", {"default": True, "tooltip": "是否区分大小写"}),
+                    "invert": ("BOOLEAN", {"default": False, "tooltip": "反转逻辑：选择True时，不匹配则通过；选择False时，匹配则通过"}),
+                },
+                "optional": AllContainer()
+            }
+        else:
+            return {
+                "required": {
+                    "input_text": ("STRING", {"default": "", "multiline": False, "tooltip": "输入文本，将与预设文本比较"}),
+                    "preset_text": ("STRING", {"default": "", "multiline": False, "tooltip": "预设文本，用于与输入文本比较"}),
+                    "case_sensitive": ("BOOLEAN", {"default": True, "tooltip": "是否区分大小写"}),
+                    "invert": ("BOOLEAN", {"default": False, "tooltip": "反转逻辑：选择True时，不匹配则通过；选择False时，匹配则通过"}),
+                },
+                "optional": {
+                    "input": ("*", {"tooltip": "任意类型的输入，当条件匹配时将被传递到输出"})
+                }
+            }
+
+    RETURN_TYPES = ("*", "BOOLEAN",)
+    RETURN_NAMES = ("output", "is_matched",)
+    FUNCTION = "gate_control"
+    CATEGORY = "YCNode/Logic"
+
+    def check_lazy_status(self, input_text, preset_text, case_sensitive, invert, **kwargs):
+        # 检查输入端口的连接状态
+        if "input" not in kwargs or kwargs["input"] is None:
+            return ["input"]
+        return None
+
+    def gate_control(self, input_text, preset_text, case_sensitive, invert, **kwargs):
+        # 判断文本是否匹配
+        if case_sensitive:
+            is_matched = input_text == preset_text
+        else:
+            is_matched = input_text.lower() == preset_text.lower()
+        
+        # 如果设置了反转，则翻转匹配结果
+        should_pass = is_matched if not invert else not is_matched
+        
+        # 检查是否有输入
+        if "input" not in kwargs or kwargs["input"] is None:
+            print("警告：通用条件开关 - 未连接输入")
+            # 返回None和匹配状态
+            return (None, is_matched)
+        
+        # 根据匹配结果决定是否传递输入
+        if should_pass:
+            return (kwargs["input"], is_matched)
+        else:
+            # 不匹配时返回None
+            return (None, is_matched)
+
 # 节点映射
 NODE_CLASS_MAPPINGS = {
     "YC Text Index Switch": textIndexSwitch,
@@ -334,6 +403,7 @@ NODE_CLASS_MAPPINGS = {
     "DynamicThreshold": DynamicThreshold,
     "YC Text Condition Switch": TextConditionSwitch,
     "YC Mask Condition Switch": MaskConditionSwitch,
+    "YC Universal Gate": UniversalConditionGate,
 }
 
 # 节点显示名称映射
@@ -344,4 +414,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "DynamicThreshold": "Dynamic Threshold",
     "YC Text Condition Switch": "Text Condition Switch (YC)",
     "YC Mask Condition Switch": "Mask Condition Switch (YC)",
+    "YC Universal Gate": "Universal Condition Gate (YC)",
 } 
