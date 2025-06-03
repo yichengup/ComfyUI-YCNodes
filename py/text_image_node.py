@@ -4,7 +4,7 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 import math
 
-class TextImageGenerator:
+class YCTextImageGenerator:
     """
     生成文本图像和对应遮罩的节点
     支持中英文、水平垂直排版，可调整字体大小、颜色、位置等
@@ -46,7 +46,7 @@ class TextImageGenerator:
     
     RETURN_TYPES = ("IMAGE", "MASK")
     FUNCTION = "generate_text_image"
-    CATEGORY = "YCNode/Text"
+    CATEGORY = "image/text"
     
     def hex_to_rgb(self, hex_color):
         """将十六进制颜色转换为RGB值"""
@@ -286,13 +286,47 @@ class TextImageGenerator:
         mask_tensor = torch.from_numpy(np.array(mask_image).astype(np.float32) / 255.0).unsqueeze(0)
         
         return (img_tensor, mask_tensor)
+    
+class YCPromptReplace:
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
+            },
+            "optional": {
+                "find1": ("STRING", {"multiline": False, "default": ""}),
+                "replace1": ("STRING", {"multiline": False, "default": ""}),
+                "find2": ("STRING", {"multiline": False, "default": ""}),
+                "replace2": ("STRING", {"multiline": False, "default": ""}),
+                "find3": ("STRING", {"multiline": False, "default": ""}),
+                "replace3": ("STRING", {"multiline": False, "default": ""}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("prompt",)
+    FUNCTION = "replace_text"
+    CATEGORY = "EasyUse/Prompt"
+
+    def replace_text(self, prompt, find1="", replace1="", find2="", replace2="", find3="", replace3=""):
+
+        prompt = prompt.replace(find1, replace1)
+        prompt = prompt.replace(find2, replace2)
+        prompt = prompt.replace(find3, replace3)
+
+        return (prompt,)
+    
 
 # 注册节点
 NODE_CLASS_MAPPINGS = {
-    "YCTextImageGenerator": TextImageGenerator
+    "YCTextImageGenerator": YCTextImageGenerator,
+    "YCPromptReplace": YCPromptReplace
 }
 
 # 显示名称
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "YCTextImageGenerator": "文本图像生成器"
+    "YCTextImageGenerator": "YC Text Image Generator",
+    "YCPromptReplace": "YC Prompt Replace"
 } 
