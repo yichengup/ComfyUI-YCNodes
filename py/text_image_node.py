@@ -46,7 +46,7 @@ class YCTextImageGenerator:
     
     RETURN_TYPES = ("IMAGE", "MASK")
     FUNCTION = "generate_text_image"
-    CATEGORY = "image/text"
+    CATEGORY = "YCNode/Text"
     
     def hex_to_rgb(self, hex_color):
         """将十六进制颜色转换为RGB值"""
@@ -308,7 +308,7 @@ class YCPromptReplace:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("prompt",)
     FUNCTION = "replace_text"
-    CATEGORY = "EasyUse/Prompt"
+    CATEGORY = "YCNode/Text"
 
     def replace_text(self, prompt, find1="", replace1="", find2="", replace2="", find3="", replace3=""):
 
