@@ -287,46 +287,13 @@ class YCTextImageGenerator:
         
         return (img_tensor, mask_tensor)
     
-class YCPromptReplace:
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "prompt": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
-            },
-            "optional": {
-                "find1": ("STRING", {"multiline": False, "default": ""}),
-                "replace1": ("STRING", {"multiline": False, "default": ""}),
-                "find2": ("STRING", {"multiline": False, "default": ""}),
-                "replace2": ("STRING", {"multiline": False, "default": ""}),
-                "find3": ("STRING", {"multiline": False, "default": ""}),
-                "replace3": ("STRING", {"multiline": False, "default": ""}),
-            },
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("prompt",)
-    FUNCTION = "replace_text"
-    CATEGORY = "YCNode/Text"
-
-    def replace_text(self, prompt, find1="", replace1="", find2="", replace2="", find3="", replace3=""):
-
-        prompt = prompt.replace(find1, replace1)
-        prompt = prompt.replace(find2, replace2)
-        prompt = prompt.replace(find3, replace3)
-
-        return (prompt,)
-    
 
 # 注册节点
 NODE_CLASS_MAPPINGS = {
-    "YCTextImageGenerator": YCTextImageGenerator,
-    "YCPromptReplace": YCPromptReplace
+    "YCTextImageGenerator": YCTextImageGenerator
 }
 
 # 显示名称
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "YCTextImageGenerator": "YC Text Image Generator",
-    "YCPromptReplace": "YC Prompt Replace"
+    "YCTextImageGenerator": "YC Text Image Generator"
 } 
