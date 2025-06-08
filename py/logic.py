@@ -5,7 +5,10 @@ import numpy as np
 from PIL import Image
 import folder_paths
 import re
-import inspect
+import inspect      
+import random
+import hashlib
+
 
 MAX_FLOW_NUM = 12  # 扩展到12个输入端口
 lazy_options = {"lazy": True}  # 懒加载选项
@@ -395,6 +398,57 @@ class UniversalConditionGate:
             # 不匹配时返回None
             return (None, is_matched)
 
+MAX_SEED_NUM = 1125899906842624
+       
+class YC_seedList:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "min_num": ("INT", {"default": 0, "min": 0, "max": MAX_SEED_NUM}),
+                "max_num": ("INT", {"default": MAX_SEED_NUM, "min": 0 }),
+                "method": (["random", "increment", "decrement"], {"default": "random"}),
+                "total": ("INT", {"default": 1, "min": 1, "max": 100000}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": MAX_SEED_NUM,}),
+            },
+            "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO", "my_unique_id": "UNIQUE_ID"},
+        }
+
+    RETURN_TYPES = ("INT", "INT")
+    RETURN_NAMES = ("seed", "total")
+    FUNCTION = "doit"
+    DESCRIPTION = "Random number seed that can be used in a for loop, by connecting index and easy indexAny node to realize different seed values in the loop."
+
+    CATEGORY = "YCNode/Logic"
+
+    def doit(self, min_num, max_num, method, total, seed=0, prompt=None, extra_pnginfo=None, my_unique_id=None):
+        random.seed(seed)
+
+        seed_list = []
+        if min_num > max_num:
+            min_num, max_num = max_num, min_num
+        for i in range(total):
+            if method == 'random':
+                s = random.randint(min_num, max_num)
+            elif method == 'increment':
+                s = min_num + i
+                if s > max_num:
+                    s = max_num
+            elif method == 'decrement':
+                s = max_num - i
+                if s < min_num:
+                    s = min_num
+            seed_list.append(s)
+        return seed_list, total
+
+    @classmethod
+    def IS_CHANGED(s, seed, **kwargs):
+        m = hashlib.sha256()
+        m.update(seed)
+        return m.digest().hex()
+
+# 全局随机种
+
 # 节点映射
 NODE_CLASS_MAPPINGS = {
     "YC Text Index Switch": textIndexSwitch,
@@ -404,6 +458,7 @@ NODE_CLASS_MAPPINGS = {
     "YC Text Condition Switch": TextConditionSwitch,
     "YC Mask Condition Switch": MaskConditionSwitch,
     "YC Universal Gate": UniversalConditionGate,
+    "YC Seed List": YC_seedList
 }
 
 # 节点显示名称映射
@@ -415,4 +470,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "YC Text Condition Switch": "Text Condition Switch (YC)",
     "YC Mask Condition Switch": "Mask Condition Switch (YC)",
     "YC Universal Gate": "Universal Condition Gate (YC)",
+    "YC Seed List": "Seed List (YC)"
 } 
