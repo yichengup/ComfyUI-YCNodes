@@ -207,9 +207,11 @@ class YC_Image_Save:
                 "images": ("IMAGE", ),
                 "output_path": ("STRING", {"default": '', "multiline": False}),
                 "filename_prefix": ("STRING", {"default": "ComfyUI"}),
-                "filename_delimiter": ("STRING", {"default":"_"}),
-                "filename_number_padding": ("INT", {"default":4, "min":1, "max":9, "step":1}),
-                "filename_number_start": (["false", "true"],),
+                "filename_delimiter": ("STRING", {"default":"_", "tooltip": "分隔符或装饰符，可用于分隔前缀和序号，或纯粹作为装饰添加"}),
+                "filename_number_mode": (["none", "normal", "padded"],),
+                "filename_number_padding": ("INT", {"default":2, "min":1, "max":9, "step":1}),
+                "filename_number_position": (["suffix", "prefix"],),
+                "filename_number_strategy": (["format_match", "global_increment"], {"tooltip": "format_match: 只匹配相同格式文件递增; global_increment: 按目录所有文件数量递增"}),
                 "extension": (['png', 'jpg', 'jpeg', 'gif', 'tiff', 'webp', 'bmp'], ),
             },
             "optional": {
@@ -234,7 +236,7 @@ class YC_Image_Save:
     CATEGORY = "YCNode/Image"
 
     def yc_save_images(self, images, output_path='', filename_prefix="ComfyUI", filename_delimiter='_',
-                        extension='png', filename_number_padding=4, filename_number_start='false', 
+                        extension='png', filename_number_mode='padded', filename_number_padding=2, filename_number_position='suffix', filename_number_strategy='format_match',
                         caption=None, caption_file_extension=".txt",
                         prompt=None, extra_pnginfo=None):
 
@@ -256,27 +258,68 @@ class YC_Image_Save:
             print(f"警告: 路径 {output_path} 不存在，正在创建目录。")
             os.makedirs(output_path, exist_ok=True)
 
-        # 查找现有的计数器值
-        try:
-            if filename_number_start == 'true':
-                pattern = f"(\\d+){re.escape(delimiter)}{re.escape(filename_prefix)}"
-            else:
-                pattern = f"{re.escape(filename_prefix)}{re.escape(delimiter)}(\\d+)"
-            
-            existing_counters = []
-            for filename in os.listdir(output_path):
-                match = re.match(pattern, filename)
-                if match:
-                    try:
-                        existing_counters.append(int(match.group(1)))
-                    except (ValueError, IndexError):
-                        pass
+        # 查找现有的计数器值（仅在需要序号时）
+        counter = 1
+        if filename_number_mode != "none":
+            try:
+                if filename_number_strategy == "global_increment":
+                    # 全局递增模式：计算目录中所有文件数量 + 1
+                    all_files = [f for f in os.listdir(output_path) 
+                                if os.path.isfile(os.path.join(output_path, f)) and 
+                                f.lower().endswith(tuple(ALLOWED_EXT))]
+                    counter = len(all_files) + 1
+                    print(f"全局递增模式: 检测到 {len(all_files)} 个文件，序号从 {counter} 开始")
+                else:
+                    # 格式匹配模式：只匹配当前设置的命名格式
+                    # 构建正则表达式模式，只匹配当前设置的命名格式
+                    if filename_number_position == 'prefix':
+                        if filename_number_mode == "padded":
+                            # 匹配固定位数的零填充数字
+                            if delimiter and delimiter.strip():
+                                pattern = f"^(\\d{{{number_padding}}}){re.escape(delimiter)}{re.escape(filename_prefix)}\\."
+                            else:
+                                pattern = f"^(\\d{{{number_padding}}}){re.escape(filename_prefix)}\\."
+                        else:  # normal
+                            # 匹配任意位数的数字
+                            if delimiter and delimiter.strip():
+                                pattern = f"^(\\d+){re.escape(delimiter)}{re.escape(filename_prefix)}\\."
+                            else:
+                                pattern = f"^(\\d+){re.escape(filename_prefix)}\\."
+                    else:  # suffix
+                        if filename_number_mode == "padded":
+                            # 匹配固定位数的零填充数字
+                            if delimiter and delimiter.strip():
+                                pattern = f"^{re.escape(filename_prefix)}{re.escape(delimiter)}(\\d{{{number_padding}}})\\."
+                            else:
+                                pattern = f"^{re.escape(filename_prefix)}(\\d{{{number_padding}}})\\."
+                        else:  # normal
+                            # 匹配任意位数的数字
+                            if delimiter and delimiter.strip():
+                                pattern = f"^{re.escape(filename_prefix)}{re.escape(delimiter)}(\\d+)\\."
+                            else:
+                                pattern = f"^{re.escape(filename_prefix)}(\\d+)\\."
+                    
+                    existing_counters = []
+                    for filename in os.listdir(output_path):
+                        # 只检查文件，跳过目录
+                        if os.path.isfile(os.path.join(output_path, filename)):
+                            match = re.match(pattern, filename)
+                            if match:
+                                try:
+                                    existing_counters.append(int(match.group(1)))
+                                except (ValueError, IndexError):
+                                    pass
+                                    
+                    if existing_counters:
+                        existing_counters.sort(reverse=True)
+                        counter = existing_counters[0] + 1
+                        print(f"格式匹配模式: 检测到现有文件，序号从 {counter} 开始")
+                    else:
+                        print(f"格式匹配模式: 未检测到匹配格式的现有文件，序号从 1 开始")
                         
-            existing_counters.sort(reverse=True)
-            counter = existing_counters[0] + 1 if existing_counters else 1
-        except Exception as e:
-            print(f"警告: 计数器初始化失败: {str(e)}，使用默认值1")
-            counter = 1
+            except Exception as e:
+                print(f"警告: 计数器初始化失败: {str(e)}，使用默认值1")
+                counter = 1
 
         # 设置扩展名
         file_extension = '.' + extension
@@ -298,23 +341,75 @@ class YC_Image_Save:
                 metadata = PngInfo()
                 exif_data = metadata
 
-            # 生成文件名 (固定使用overwrite_mode='false')
-            if filename_number_start == 'true':
-                file = f"{counter:0{number_padding}}{delimiter}{filename_prefix}{file_extension}"
-                base_filename = f"{counter:0{number_padding}}{delimiter}{filename_prefix}"
-            else:
-                file = f"{filename_prefix}{delimiter}{counter:0{number_padding}}{file_extension}"
-                base_filename = f"{filename_prefix}{delimiter}{counter:0{number_padding}}"
-            
-            if os.path.exists(os.path.join(output_path, file)):
-                counter += 1
-                # 重新生成文件名
-                if filename_number_start == 'true':
-                    file = f"{counter:0{number_padding}}{delimiter}{filename_prefix}{file_extension}"
-                    base_filename = f"{counter:0{number_padding}}{delimiter}{filename_prefix}"
+            # 生成文件名 - 根据序号模式和位置
+            if filename_number_mode == "none":
+                # 无序号模式 - 可以选择是否添加装饰符
+                if delimiter and delimiter.strip():
+                    file = f"{filename_prefix}{delimiter}{file_extension}"
+                    base_filename = f"{filename_prefix}{delimiter}"
                 else:
-                    file = f"{filename_prefix}{delimiter}{counter:0{number_padding}}{file_extension}"
-                    base_filename = f"{filename_prefix}{delimiter}{counter:0{number_padding}}"
+                    file = f"{filename_prefix}{file_extension}"
+                    base_filename = filename_prefix
+            else:
+                # 有序号模式
+                if filename_number_mode == "padded":
+                    # 零填充模式（如：01, 02, 03...）
+                    number_str = f"{counter:0{number_padding}}"
+                else:
+                    # 普通模式（如：1, 2, 3...）
+                    number_str = str(counter)
+                
+                if filename_number_position == 'prefix':
+                    # 序号在前：number_delimiter_prefix.ext
+                    if delimiter and delimiter.strip():
+                        file = f"{number_str}{delimiter}{filename_prefix}{file_extension}"
+                        base_filename = f"{number_str}{delimiter}{filename_prefix}"
+                    else:
+                        file = f"{number_str}{filename_prefix}{file_extension}"
+                        base_filename = f"{number_str}{filename_prefix}"
+                else:
+                    # 序号在后：prefix_delimiter_number.ext
+                    if delimiter and delimiter.strip():
+                        file = f"{filename_prefix}{delimiter}{number_str}{file_extension}"
+                        base_filename = f"{filename_prefix}{delimiter}{number_str}"
+                    else:
+                        file = f"{filename_prefix}{number_str}{file_extension}"
+                        base_filename = f"{filename_prefix}{number_str}"
+            
+            # 检查文件是否存在（仅在overwrite_mode='false'时）
+            if os.path.exists(os.path.join(output_path, file)):
+                if filename_number_mode != "none":
+                    counter += 1
+                    # 重新生成文件名
+                    if filename_number_mode == "padded":
+                        number_str = f"{counter:0{number_padding}}"
+                    else:
+                        number_str = str(counter)
+                    
+                    if filename_number_position == 'prefix':
+                        if delimiter and delimiter.strip():
+                            file = f"{number_str}{delimiter}{filename_prefix}{file_extension}"
+                            base_filename = f"{number_str}{delimiter}{filename_prefix}"
+                        else:
+                            file = f"{number_str}{filename_prefix}{file_extension}"
+                            base_filename = f"{number_str}{filename_prefix}"
+                    else:
+                        if delimiter and delimiter.strip():
+                            file = f"{filename_prefix}{delimiter}{number_str}{file_extension}"
+                            base_filename = f"{filename_prefix}{delimiter}{number_str}"
+                        else:
+                            file = f"{filename_prefix}{number_str}{file_extension}"
+                            base_filename = f"{filename_prefix}{number_str}"
+                else:
+                    # 无序号模式下，如果文件存在，添加时间戳避免覆盖
+                    import time
+                    timestamp = str(int(time.time()))
+                    if delimiter and delimiter.strip():
+                        file = f"{filename_prefix}{delimiter}{timestamp}{file_extension}"
+                        base_filename = f"{filename_prefix}{delimiter}{timestamp}"
+                    else:
+                        file = f"{filename_prefix}_{timestamp}{file_extension}"
+                        base_filename = f"{filename_prefix}_{timestamp}"
 
             # 保存图片
             try:
@@ -358,7 +453,9 @@ class YC_Image_Save:
             except Exception as e:
                 print(f'保存文件失败，错误: {str(e)}')
 
-            counter += 1
+            # 仅在有序号模式下递增计数器
+            if filename_number_mode != "none":
+                counter += 1
 
         # 返回结果 - 修改为返回文件名而不是完整路径
         return {"ui": {"images": results}, "result": (images, output_filenames,)}
