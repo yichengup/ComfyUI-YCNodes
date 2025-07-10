@@ -174,6 +174,8 @@ class MaskSplitFilter:
         
         return (result_masks,)
 
+
+
 class MaskPreviewNode(SaveImage):
     def __init__(self):
         self.output_dir = folder_paths.get_temp_directory()
@@ -327,13 +329,89 @@ def get_mask_polygon(self, mask_np):
     polygon = cv2.approxPolyDP(largest_contour, epsilon, True)
     
     return polygon.squeeze()
+
+class MaskFilterBySolidity:
+    """
+    一个通过保留具有最高坚实度的区域来过滤遮罩的节点。
+    坚实度是衡量一个形状有多"坚实"或"凸"的指标。
+    它的计算方法是：面积 / 凸包面积。
+    一个完美的凸形，其坚实度为1.0。
+    这对于从噪声或碎片中分离出完整、非破碎的形状很有用。
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mask": ("MASK",),
+                "keep_top_n": ("INT", {"default": 1, "min": 1, "max": 10, "step": 1}),
+                "min_area": ("INT", {"default": 1000, "min": 0, "max": 99999, "step": 1}),
+            }
+        }
+
+    RETURN_TYPES = ("MASK",)
+    RETURN_NAMES = ("filtered_mask",)
+    FUNCTION = "filter_by_solidity"
+    CATEGORY = "YCNode/Mask"
+
+    def filter_by_solidity(self, mask, keep_top_n=1, min_area=100):
+        mask_np = mask.reshape((-1, mask.shape[-2], mask.shape[-1])).cpu().numpy()
+        result_masks = []
+
+        for m in mask_np:
+            # 转换为8位灰度图
+            mask_8bit = (m * 255).astype(np.uint8)
+            
+            # 找到所有外部轮廓
+            contours, _ = cv2.findContours(mask_8bit, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            # 过滤掉面积过小的轮廓
+            valid_contours = [c for c in contours if cv2.contourArea(c) >= min_area]
+
+            # 创建一个空的黑色遮罩用于存放结果
+            filtered_mask = np.zeros_like(mask_8bit)
+
+            if valid_contours:
+                # 定义坚实度计算函数
+                def calculate_solidity(c):
+                    area = cv2.contourArea(c)
+                    # 预过滤后，此检查主要是为了安全
+                    if area == 0:
+                        return 0
+                    hull = cv2.convexHull(c)
+                    hull_area = cv2.contourArea(hull)
+                    if hull_area == 0:
+                        return 0
+                    return float(area) / hull_area
+
+                # 计算所有轮廓的坚实度
+                contour_solidities = [(c, calculate_solidity(c)) for c in valid_contours]
+                
+                # 按坚实度从高到低排序
+                contour_solidities.sort(key=lambda x: x[1], reverse=True)
+                
+                # 保留前keep_top_n个坚实度最高的轮廓
+                top_contours = [c for c, _ in contour_solidities[:keep_top_n]]
+                
+                # 在新的遮罩上绘制这些轮廓
+                cv2.drawContours(filtered_mask, top_contours, -1, 255, -1)
+
+            # 转换回0-1范围的浮点数并添加到结果列表
+            result_mask = filtered_mask.astype(np.float32) / 255.0
+            result_masks.append(result_mask)
+        
+        # 将结果堆叠并转换为torch张量
+        result_tensor = torch.from_numpy(np.stack(result_masks))
+        
+        return (result_tensor,)
+
 # 节点注册
 NODE_CLASS_MAPPINGS = {
     "MaskTopNFilter": MaskTopNFilter,
     "MaskSplitFilter": MaskSplitFilter,
     "MaskPreviewNode": MaskPreviewNode,
     "MaskContourFillNode": MaskContourFillNode,
-    "YCRemapMaskRange": YCRemapMaskRange
+    "YCRemapMaskRange": YCRemapMaskRange,
+    "MaskFilterBySolidity": MaskFilterBySolidity
 }
 
 # 节点显示名称
@@ -342,5 +420,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MaskSplitFilter": "Mask Split Filter",
     "MaskPreviewNode": "MaskPreview_YC",
     "MaskContourFillNode": "MaskContourFill_YC",
-    "YCRemapMaskRange": "Remap Mask Range (YC)"
+    "YCRemapMaskRange": "Remap Mask Range (YC)",
+    "MaskFilterBySolidity": "Filter Mask By Solidity"
 }
