@@ -1,5 +1,5 @@
 torch         
 numpy        
 pillow        
-opencv-python   
+opencv-python  # Import name in code is cv2   
 scipy
