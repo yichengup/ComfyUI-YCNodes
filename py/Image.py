@@ -155,6 +155,79 @@ def create_pad_mask(original_width, original_height, left, top, right, bottom, i
     
     return mask_tensor
 
+def smart_crop_image(image, left, top, right, bottom):
+    """智能图像裁剪函数
+    
+    Args:
+        image: PIL图像
+        left: 左边裁剪像素数
+        top: 上边裁剪像素数
+        right: 右边裁剪像素数
+        bottom: 下边裁剪像素数
+    """
+    # 获取原始图像尺寸
+    original_width, original_height = image.size
+    
+    # 计算裁剪后的尺寸
+    new_width = original_width - left - right
+    new_height = original_height - top - bottom
+    
+    # 确保裁剪后的尺寸大于0
+    if new_width <= 0 or new_height <= 0:
+        raise ValueError(f"裁剪后尺寸无效: {new_width}x{new_height}")
+    
+    # 计算裁剪区域
+    crop_left = left
+    crop_top = top
+    crop_right = original_width - right
+    crop_bottom = original_height - bottom
+    
+    # 执行裁剪
+    result = image.crop((crop_left, crop_top, crop_right, crop_bottom))
+    
+    return result
+
+def create_crop_mask(original_width, original_height, left, top, right, bottom, invert_mask=False):
+    """创建裁剪遮罩，可选择遮罩方向
+    
+    Args:
+        original_width: 原始图像宽度
+        original_height: 原始图像高度
+        left: 左边裁剪像素
+        top: 上边裁剪像素
+        right: 右边裁剪像素
+        bottom: 下边裁剪像素
+        invert_mask: 是否反向遮罩
+            - False: 保留区域为白色(1.0)，裁剪区域为黑色(0.0)
+            - True: 保留区域为黑色(0.0)，裁剪区域为白色(1.0)
+    """
+    # 计算裁剪后的尺寸
+    new_width = original_width - left - right
+    new_height = original_height - top - bottom
+    
+    # 确保尺寸有效
+    if new_width <= 0 or new_height <= 0:
+        raise ValueError(f"裁剪后尺寸无效: {new_width}x{new_height}")
+    
+    # 根据反向设置决定默认颜色
+    default_color = 255 if invert_mask else 0
+    fill_color = 0 if invert_mask else 255
+    
+    # 创建PIL遮罩图像（使用原始尺寸）
+    mask_image = Image.new('L', (original_width, original_height), default_color)
+    
+    # 在保留区域绘制填充色矩形
+    # 保留区域是 (left, top) 到 (left + new_width, top + new_height)
+    mask_image.paste(fill_color, (left, top, left + new_width, top + new_height))
+    
+    # 转换为numpy数组并归一化到0.0-1.0
+    mask_np = np.array(mask_image).astype(np.float32) / 255.0
+    
+    # 转换为torch tensor并添加批次维度
+    mask_tensor = torch.from_numpy(mask_np).unsqueeze(0)  # [1, height, width]
+    
+    return mask_tensor
+
 class ImageSmartPad:
     """智能图像扩图节点"""
     
@@ -202,6 +275,54 @@ class ImageSmartPad:
             
             # 创建对应的遮罩
             mask_tensor = create_pad_mask(original_width, original_height, left, top, right, bottom, invert_mask)
+            ret_masks.append(mask_tensor)
+        
+        # 返回结果
+        return (torch.cat(ret_images, dim=0), torch.cat(ret_masks, dim=0))
+
+class ImageSmartCrop:
+    """智能图像裁剪节点"""
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "left": ("INT", {"default": 50, "min": 0, "max": 1000, "step": 1}),
+                "top": ("INT", {"default": 50, "min": 0, "max": 1000, "step": 1}),
+                "right": ("INT", {"default": 50, "min": 0, "max": 1000, "step": 1}),
+                "bottom": ("INT", {"default": 50, "min": 0, "max": 1000, "step": 1}),
+                "invert_mask": ("BOOLEAN", {"default": False}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "MASK")
+    RETURN_NAMES = ("image", "mask")
+    FUNCTION = "smart_crop"
+    CATEGORY = "YCNode/Image"
+
+    def smart_crop(self, image, left, top, right, bottom, invert_mask):
+        """智能裁剪处理"""
+        ret_images = []
+        ret_masks = []
+        
+        # 处理batch
+        for img in image:
+            # 转换为PIL图像
+            pil_img = tensor2pil(torch.unsqueeze(img, 0))
+            
+            # 获取原始图像尺寸
+            original_width, original_height = pil_img.size
+            
+            # 执行智能裁剪
+            result_pil = smart_crop_image(pil_img, left, top, right, bottom)
+            
+            # 转换回tensor
+            result_tensor = pil2tensor(result_pil)
+            ret_images.append(result_tensor)
+            
+            # 创建对应的遮罩（使用原始尺寸）
+            mask_tensor = create_crop_mask(original_width, original_height, left, top, right, bottom, invert_mask)
             ret_masks.append(mask_tensor)
         
         # 返回结果
@@ -342,6 +463,7 @@ class ImageMosaic:
 # 注册所有节点
 NODE_CLASS_MAPPINGS = {
     "ImageSmartPad": ImageSmartPad,
+    "ImageSmartCrop": ImageSmartCrop,
     "ImageMirror": ImageMirror,
     "ImageRotate": ImageRotate,
     "ImageMosaic": ImageMosaic
@@ -350,6 +472,7 @@ NODE_CLASS_MAPPINGS = {
 # 显示名称映射
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ImageSmartPad": "Image Smart Pad",
+    "ImageSmartCrop": "Image Smart Crop",
     "ImageMirror": "Image Mirror",
     "ImageRotate": "Image Rotate", 
     "ImageMosaic": "Image Mosaic"
