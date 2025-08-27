@@ -3,6 +3,8 @@ import numpy as np
 from PIL import Image
 import cv2
 
+# yicheng author
+MAX_RESOLUTION = 16384
 # 填充模式列表
 PAD_MODES = [
     'edge',      # 边缘颜色填充
@@ -155,6 +157,7 @@ def create_pad_mask(original_width, original_height, left, top, right, bottom, i
     
     return mask_tensor
 
+
 def smart_crop_image(image, left, top, right, bottom):
     """智能图像裁剪函数
     
@@ -228,7 +231,8 @@ def create_crop_mask(original_width, original_height, left, top, right, bottom, 
     
     return mask_tensor
 
-class ImageSmartPad:
+# yicheng author
+class YCImageSmartPad:
     """智能图像扩图节点"""
     
     @classmethod
@@ -280,7 +284,8 @@ class ImageSmartPad:
         # 返回结果
         return (torch.cat(ret_images, dim=0), torch.cat(ret_masks, dim=0))
 
-class ImageSmartCrop:
+# yicheng author
+class YCImageSmartCrop:
     """智能图像裁剪节点"""
     
     @classmethod
@@ -459,21 +464,154 @@ class ImageMosaic:
         # 转换回torch tensor
         return (torch.from_numpy(mosaic_image),)
 
+class YCImageTile:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "rows": ("INT", { "default": 2, "min": 1, "max": 256, "step": 1, }),
+                "cols": ("INT", { "default": 2, "min": 1, "max": 256, "step": 1, }),
+                "overlap": ("FLOAT", { "default": 0, "min": 0, "max": 0.5, "step": 0.01, }),
+                "overlap_x": ("INT", { "default": 0, "min": 0, "max": MAX_RESOLUTION//2, "step": 1, }),
+                "overlap_y": ("INT", { "default": 0, "min": 0, "max": MAX_RESOLUTION//2, "step": 1, }),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "INT", "INT", "INT")
+    RETURN_NAMES = ("IMAGE", "tile_width", "tile_height", "overlap_x", "overlap_y",)
+    FUNCTION = "execute"
+    CATEGORY = "YCNode/Image"
+
+    def execute(self, image, rows, cols, overlap, overlap_x, overlap_y):
+        h, w = image.shape[1:3]
+        tile_h = h // rows
+        tile_w = w // cols
+        h = tile_h * rows
+        w = tile_w * cols
+        overlap_h = int(tile_h * overlap) + overlap_y
+        overlap_w = int(tile_w * overlap) + overlap_x
+
+        # max overlap is half of the tile size
+        overlap_h = min(tile_h // 2, overlap_h)
+        overlap_w = min(tile_w // 2, overlap_w)
+
+        if rows == 1:
+            overlap_h = 0
+        if cols == 1:
+            overlap_w = 0
+        
+        tiles = []
+        for i in range(rows):
+            for j in range(cols):
+                y1 = i * tile_h
+                x1 = j * tile_w
+
+                if i > 0:
+                    y1 -= overlap_h
+                if j > 0:
+                    x1 -= overlap_w
+
+                y2 = y1 + tile_h + overlap_h
+                x2 = x1 + tile_w + overlap_w
+
+                if y2 > h:
+                    y2 = h
+                    y1 = y2 - tile_h - overlap_h
+                if x2 > w:
+                    x2 = w
+                    x1 = x2 - tile_w - overlap_w
+
+                tiles.append(image[:, y1:y2, x1:x2, :])
+        tiles = torch.cat(tiles, dim=0)
+
+        return(tiles, tile_w+overlap_w, tile_h+overlap_h, overlap_w, overlap_h,)
+
+class YCImageUntile:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "tiles": ("IMAGE",),
+                "overlap_x": ("INT", { "default": 0, "min": 0, "max": MAX_RESOLUTION//2, "step": 1, }),
+                "overlap_y": ("INT", { "default": 0, "min": 0, "max": MAX_RESOLUTION//2, "step": 1, }),
+                "rows": ("INT", { "default": 2, "min": 1, "max": 256, "step": 1, }),
+                "cols": ("INT", { "default": 2, "min": 1, "max": 256, "step": 1, }),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "execute"
+    CATEGORY = "YCNode/Image"
+
+    def execute(self, tiles, overlap_x, overlap_y, rows, cols):
+        tile_h, tile_w = tiles.shape[1:3]
+        tile_h -= overlap_y
+        tile_w -= overlap_x
+        out_w = cols * tile_w
+        out_h = rows * tile_h
+
+        out = torch.zeros((1, out_h, out_w, tiles.shape[3]), device=tiles.device, dtype=tiles.dtype)
+
+        for i in range(rows):
+            for j in range(cols):
+                y1 = i * tile_h
+                x1 = j * tile_w
+
+                if i > 0:
+                    y1 -= overlap_y
+                if j > 0:
+                    x1 -= overlap_x
+
+                y2 = y1 + tile_h + overlap_y
+                x2 = x1 + tile_w + overlap_x
+
+                if y2 > out_h:
+                    y2 = out_h
+                    y1 = y2 - tile_h - overlap_y
+                if x2 > out_w:
+                    x2 = out_w
+                    x1 = x2 - tile_w - overlap_x
+                
+                mask = torch.ones((1, tile_h+overlap_y, tile_w+overlap_x), device=tiles.device, dtype=tiles.dtype)
+
+                # feather the overlap on top
+                if i > 0 and overlap_y > 0:
+                    mask[:, :overlap_y, :] *= torch.linspace(0, 1, overlap_y, device=tiles.device, dtype=tiles.dtype).unsqueeze(1)
+                # feather the overlap on bottom
+                #if i < rows - 1:
+                #    mask[:, -overlap_y:, :] *= torch.linspace(1, 0, overlap_y, device=tiles.device, dtype=tiles.dtype).unsqueeze(1)
+                # feather the overlap on left
+                if j > 0 and overlap_x > 0:
+                    mask[:, :, :overlap_x] *= torch.linspace(0, 1, overlap_x, device=tiles.device, dtype=tiles.dtype).unsqueeze(0)
+                # feather the overlap on right
+                #if j < cols - 1:
+                #    mask[:, :, -overlap_x:] *= torch.linspace(1, 0, overlap_x, device=tiles.device, dtype=tiles.dtype).unsqueeze(0)
+                
+                mask = mask.unsqueeze(-1).repeat(1, 1, 1, tiles.shape[3])
+                tile = tiles[i * cols + j] * mask
+                out[:, y1:y2, x1:x2, :] = out[:, y1:y2, x1:x2, :] * (1 - mask) + tile
+        return(out, )
 
 # 注册所有节点
 NODE_CLASS_MAPPINGS = {
-    "ImageSmartPad": ImageSmartPad,
-    "ImageSmartCrop": ImageSmartCrop,
+    "YCImageSmartPad": YCImageSmartPad,
+    "YCImageSmartCrop": YCImageSmartCrop,
     "ImageMirror": ImageMirror,
     "ImageRotate": ImageRotate,
-    "ImageMosaic": ImageMosaic
+    "ImageMosaic": ImageMosaic,
+    "YCImageTile": YCImageTile,
+    "YCImageUntile": YCImageUntile
 }
 
 # 显示名称映射
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ImageSmartPad": "Image Smart Pad",
-    "ImageSmartCrop": "Image Smart Crop",
+    "YCImageSmartPad": "Yc Image Smart Pad",
+    "YCImageSmartCrop": "Yc Image Smart Crop",
     "ImageMirror": "Image Mirror",
     "ImageRotate": "Image Rotate", 
-    "ImageMosaic": "Image Mosaic"
+    "ImageMosaic": "Image Mosaic",
+    "YCImageTile": "YC Image Tile",
+    "YCImageUntile": "YC Image Untile"
 } 
+# yicheng author
