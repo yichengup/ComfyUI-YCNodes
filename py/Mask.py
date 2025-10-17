@@ -20,7 +20,7 @@ class MaskTopNFilter:
                 "keep_top_n": ("INT", {
                     "default": 2, 
                     "min": 1,
-                    "max": 10,
+                    "max": 100,
                     "step": 1
                 }),
             },
@@ -404,6 +404,118 @@ class MaskFilterBySolidity:
         
         return (result_tensor,)
 
+class MaskResizeToRatio:
+    """
+    将遮罩中的白色内容调整为指定比例的遮罩
+    自动检测白色内容的边界框，然后输出指定比例的遮罩
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mask": ("MASK",),
+                "ratio": (["1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3"], {
+                    "default": "1:1"
+                }),
+                "padding_mode": (["center", "top_left", "bottom_right"], {
+                    "default": "center"
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("MASK",)
+    RETURN_NAMES = ("resized_mask",)
+    FUNCTION = "resize_to_ratio"
+    CATEGORY = "YCNode/Mask"
+
+    def resize_to_ratio(self, mask, ratio, padding_mode="center"):
+        # 1. 处理输入mask格式
+        if isinstance(mask, torch.Tensor):
+            device = mask.device
+            if len(mask.shape) == 2:
+                mask = mask.unsqueeze(0)
+            mask_np = mask.cpu().numpy()[0]
+        else:
+            device = torch.device('cpu')
+            mask_np = mask
+        
+        # 2. 转换为二值图像
+        binary_mask = (mask_np > 0.5).astype(np.uint8)
+        
+        # 3. 找到白色内容的边界框
+        y_coords, x_coords = np.nonzero(binary_mask)
+        
+        if len(x_coords) == 0:
+            # 如果没有白色内容，返回原始尺寸的空白遮罩
+            return (torch.from_numpy(np.zeros_like(mask_np)).float().to(device),)
+        
+        # 4. 计算边界框
+        min_x, max_x = np.min(x_coords), np.max(x_coords)
+        min_y, max_y = np.min(y_coords), np.max(y_coords)
+        
+        content_width = max_x - min_x + 1
+        content_height = max_y - min_y + 1
+        
+        # 5. 解析目标比例
+        ratio_map = {
+            "1:1": (1, 1),
+            "3:4": (3, 4),
+            "4:3": (4, 3),
+            "9:16": (9, 16),
+            "16:9": (16, 9),
+            "3:2": (3, 2),
+            "2:3": (2, 3)
+        }
+        
+        target_w_ratio, target_h_ratio = ratio_map[ratio]
+        
+        # 6. 计算目标矩形尺寸（以原有内容尺寸为基础）
+        # 确保目标矩形能完全包含原有内容
+        if content_width / content_height > target_w_ratio / target_h_ratio:
+            # 内容更宽，以宽度为准
+            target_width = content_width
+            target_height = int(content_width * target_h_ratio / target_w_ratio)
+        else:
+            # 内容更高，以高度为准
+            target_height = content_height
+            target_width = int(content_height * target_w_ratio / target_h_ratio)
+        
+        # 7. 创建新的遮罩（保持原始画布尺寸）
+        original_height, original_width = mask_np.shape
+        new_mask = np.zeros((original_height, original_width), dtype=np.float32)
+        
+        # 8. 计算目标矩形的位置
+        if padding_mode == "center":
+            # 以原有内容为中心
+            content_center_x = (min_x + max_x) // 2
+            content_center_y = (min_y + max_y) // 2
+            start_x = content_center_x - target_width // 2
+            start_y = content_center_y - target_height // 2
+        elif padding_mode == "top_left":
+            # 以原有内容的左上角为基准
+            start_x = min_x
+            start_y = min_y
+        elif padding_mode == "bottom_right":
+            # 以原有内容的右下角为基准
+            start_x = max_x - target_width + 1
+            start_y = max_y - target_height + 1
+        
+        # 9. 确保不超出边界
+        start_x = max(0, start_x)
+        start_y = max(0, start_y)
+        end_x = min(original_width, start_x + target_width)
+        end_y = min(original_height, start_y + target_height)
+        
+        # 10. 在目标矩形区域填充白色
+        new_mask[start_y:end_y, start_x:end_x] = 1.0
+        
+        # 11. 返回结果
+        result_tensor = torch.from_numpy(new_mask).float().to(device)
+        if len(mask.shape) == 3:
+            result_tensor = result_tensor.unsqueeze(0)
+        
+        return (result_tensor,)
+
 # 节点注册
 NODE_CLASS_MAPPINGS = {
     "MaskTopNFilter": MaskTopNFilter,
@@ -411,7 +523,8 @@ NODE_CLASS_MAPPINGS = {
     "MaskPreviewNode": MaskPreviewNode,
     "MaskContourFillNode": MaskContourFillNode,
     "YCRemapMaskRange": YCRemapMaskRange,
-    "MaskFilterBySolidity": MaskFilterBySolidity
+    "MaskFilterBySolidity": MaskFilterBySolidity,
+    "MaskResizeToRatio": MaskResizeToRatio
 }
 
 # 节点显示名称
@@ -421,5 +534,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MaskPreviewNode": "MaskPreview_YC",
     "MaskContourFillNode": "MaskContourFill_YC",
     "YCRemapMaskRange": "Remap Mask Range (YC)",
-    "MaskFilterBySolidity": "Filter Mask By Solidity"
+    "MaskFilterBySolidity": "Filter Mask By Solidity",
+    "MaskResizeToRatio": "Resize Mask To Ratio (YC)"
 }
