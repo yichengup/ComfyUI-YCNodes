@@ -1,6 +1,36 @@
 import torch
 import numpy as np
 import cv2
+import math
+from PIL import Image
+
+# 依赖函数 - 从 imagefunc.py 迁移
+def log(message: str, message_type: str = 'info'):
+    name = 'YCNode'
+    
+    if message_type == 'error':
+        message = '\033[1;41m' + message + '\033[m'
+    elif message_type == 'warning':
+        message = '\033[1;31m' + message + '\033[m'
+    elif message_type == 'finish':
+        message = '\033[1;32m' + message + '\033[m'
+    else:
+        message = '\033[1;34m' + message + '\033[m'
+    
+    print(f"[{name}] {message}")
+
+def pil2tensor(image: Image) -> torch.Tensor:
+    return torch.from_numpy(np.array(image).astype(np.float32) / 255.0).unsqueeze(0)
+
+def tensor2pil(t_image: torch.Tensor) -> Image:
+    return Image.fromarray(np.clip(255.0 * t_image.cpu().numpy().squeeze(), 0, 255).astype(np.uint8))
+
+def image2mask(image: Image) -> torch.Tensor:
+    if image.mode == 'L':
+        return torch.tensor([pil2tensor(image)[0, :, :].tolist()])
+    else:
+        image = image.convert('RGB').split()[0]
+        return torch.tensor([pil2tensor(image)[0, :, :].tolist()])
 
 class MaskCrop_YC:
     def __init__(self):
@@ -324,7 +354,7 @@ class MaskCropRestore_YC:
             copy_width = min(expected_width, cropped_image.shape[2])
             
             if copy_width > 0 and copy_height > 0:
-                # 只复制有效的部分 - 修正索引
+                # 先直接复制图像（后续会用遮罩进行混合）
                 output_image[:, y_min:y_min+copy_height, x_min:x_min+copy_width, :] = cropped_image[:, :copy_height, :copy_width, :]
                 
         except RuntimeError:
@@ -472,16 +502,157 @@ class MaskCropRestore_YC:
         if invert_mask:
             output_mask = 1 - output_mask
         
+        # 使用遮罩进行图像合成
+        try:
+            # 确保遮罩和图像尺寸匹配
+            if output_mask.shape[1] == bg_height and output_mask.shape[2] == bg_width:
+                # 获取裁剪区域的遮罩
+                mask_region = output_mask[:, y_min:y_min+copy_height, x_min:x_min+copy_width]
+                
+                # 将遮罩扩展到RGB通道 [B, H, W, C]
+                mask_expanded = mask_region.unsqueeze(-1).expand(-1, -1, -1, channels)
+                
+                # 获取背景图像的对应区域
+                bg_region = background_image[:, y_min:y_min+copy_height, x_min:x_min+copy_width, :]
+                
+                # 使用遮罩进行混合：mask=1的地方使用cropped_image，mask=0的地方保持background
+                blended_region = bg_region * (1 - mask_expanded) + cropped_image[:, :copy_height, :copy_width, :] * mask_expanded
+                
+                # 将混合后的区域放回输出图像
+                output_image[:, y_min:y_min+copy_height, x_min:x_min+copy_width, :] = blended_region
+        except Exception as e:
+            # 如果遮罩合成失败，保持原始行为
+            pass
+        
         return (output_image, output_mask)
+
+class ImageScaleRestoreyc:
+    def __init__(self):
+        self.NODE_NAME = 'ImageScaleRestore V2'
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        method_mode = ['lanczos', 'bicubic', 'hamming', 'bilinear', 'box', 'nearest']
+        scale_by_list = ['by_scale', 'longest', 'shortest', 'width', 'height', 'total_pixel(kilo pixel)']
+        return {
+            "required": {
+                "image": ("IMAGE", ),  #
+                "scale": ("FLOAT", {"default": 1, "min": 0.01, "max": 100, "step": 0.01}),
+                "method": (method_mode,),
+                "scale_by": (scale_by_list,),  # 是否按长边缩放
+                "scale_by_length": ("INT", {"default": 1024, "min": 4, "max": 99999999, "step": 1}),
+            },
+            "optional": {
+                "mask": ("MASK",),  #
+                "original_size": ("BOX",),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "MASK", "BOX", "INT", "INT")
+    RETURN_NAMES = ("image", "mask", "original_size", "width", "height",)
+    FUNCTION = 'image_scale_restore'
+    CATEGORY = 'YCNode/Image'
+
+    def image_scale_restore(self, image, scale, method,
+                            scale_by, scale_by_length,
+                            mask = None,  original_size = None
+                            ):
+
+        l_images = []
+        l_masks = []
+        ret_images = []
+        ret_masks = []
+        for l in image:
+            l_images.append(torch.unsqueeze(l, 0))
+            m = tensor2pil(l)
+            if m.mode == 'RGBA':
+                l_masks.append(m.split()[-1])
+
+        if mask is not None:
+            if mask.dim() == 2:
+                mask = torch.unsqueeze(mask, 0)
+            l_masks = []
+            for m in mask:
+                l_masks.append(tensor2pil(torch.unsqueeze(m, 0)).convert('L'))
+
+        max_batch = max(len(l_images), len(l_masks))
+
+        orig_width, orig_height = tensor2pil(l_images[0]).size
+        if original_size is not None:
+            target_width = original_size[0]
+            target_height = original_size[1]
+        else:
+            target_width = int(orig_width * scale)
+            target_height = int(orig_height * scale)
+            if scale_by == 'longest':
+                if orig_width > orig_height:
+                    target_width = scale_by_length
+                    target_height = int(target_width * orig_height / orig_width)
+                else:
+                    target_height = scale_by_length
+                    target_width = int(target_height * orig_width / orig_height)
+            if scale_by == 'shortest':
+                if orig_width < orig_height:
+                    target_width = scale_by_length
+                    target_height = int(target_width * orig_height / orig_width)
+                else:
+                    target_height = scale_by_length
+                    target_width = int(target_height * orig_width / orig_height)
+            if scale_by == 'width':
+                target_width = scale_by_length
+                target_height = int(target_width * orig_height / orig_width)
+            if scale_by == 'height':
+                target_height = scale_by_length
+                target_width = int(target_height * orig_width / orig_height)
+            if scale_by == 'total_pixel(kilo pixel)':
+                r = orig_width / orig_height
+                target_width = math.sqrt(r * scale_by_length * 1000)
+                target_height = target_width / r
+                target_width = int(target_width)
+                target_height = int(target_height)
+        if target_width < 4:
+            target_width = 4
+        if target_height < 4:
+            target_height = 4
+        resize_sampler = Image.LANCZOS
+        if method == "bicubic":
+            resize_sampler = Image.BICUBIC
+        elif method == "hamming":
+            resize_sampler = Image.HAMMING
+        elif method == "bilinear":
+            resize_sampler = Image.BILINEAR
+        elif method == "box":
+            resize_sampler = Image.BOX
+        elif method == "nearest":
+            resize_sampler = Image.NEAREST
+
+        for i in range(max_batch):
+
+            _image = l_images[i] if i < len(l_images) else l_images[-1]
+
+            _canvas = tensor2pil(_image).convert('RGB')
+            ret_image = _canvas.resize((target_width, target_height), resize_sampler)
+            ret_mask = Image.new('L', size=ret_image.size, color='white')
+            if mask is not None:
+                _mask = l_masks[i] if i < len(l_masks) else l_masks[-1]
+                ret_mask = _mask.resize((target_width, target_height), resize_sampler)
+
+            ret_images.append(pil2tensor(ret_image))
+            ret_masks.append(image2mask(ret_mask))
+
+        log(f"{self.NODE_NAME} Processed {len(ret_images)} image(s).", message_type='finish')
+        return (torch.cat(ret_images, dim=0), torch.cat(ret_masks, dim=0), [orig_width, orig_height], target_width, target_height,)
 
 # 节点注册
 NODE_CLASS_MAPPINGS = {
     "MaskCrop_YC": MaskCrop_YC,
-    "MaskCropRestore_YC": MaskCropRestore_YC
+    "MaskCropRestore_YC": MaskCropRestore_YC,
+    "ImageScaleRestoreV2_YC": ImageScaleRestoreyc
 }
 
 # 节点显示名称
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MaskCrop_YC": "MaskCrop_YC",
-    "MaskCropRestore_YC": "MaskCropRestore_YC"
+    "MaskCropRestore_YC": "MaskCropRestore_YC",
+    "ImageScaleRestoreV2_YC": "ImageScaleRestore_YC"
 } 
