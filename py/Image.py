@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from PIL import Image
 import cv2
+import math
 
 # yicheng author
 MAX_RESOLUTION = 16384
@@ -333,6 +334,228 @@ class YCImageSmartCrop:
         # 返回结果
         return (torch.cat(ret_images, dim=0), torch.cat(ret_masks, dim=0))
 
+class YCMaskRatioPadCrop:
+    """
+    基于遮罩自动裁切到指定比例，必要时自动扩边并输出扩展区域遮罩
+    """
+
+    RATIO_MAP = {
+        "1:1": (1, 1),
+        "3:4": (3, 4),
+        "4:3": (4, 3),
+        "9:16": (9, 16),
+        "16:9": (16, 9),
+        "3:2": (3, 2),
+        "2:3": (2, 3),
+    }
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "mask": ("MASK",),
+                "ratio": (list(cls.RATIO_MAP.keys()), {"default": "1:1"}),
+                "pad_mode": (PAD_MODES, {"default": "edge"}),
+                "fill_color": ("STRING", {"default": "#ffffff", "multiline": False}),
+                "extra_expand": ("INT", {"default": 0, "min": 0, "max": 2000, "step": 1}),
+                "padding_mode": (["center", "top", "bottom", "left", "right"], {"default": "center"}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "MASK", "MASK")
+    RETURN_NAMES = ("image", "mask", "pad_mask")
+    FUNCTION = "execute"
+    CATEGORY = "YCNode/Image"
+
+    def execute(self, image, mask, ratio, pad_mode, fill_color, extra_expand, padding_mode):
+        if image.shape[0] != mask.shape[0]:
+            raise ValueError("image 与 mask 的 batch 大小需要一致")
+
+        ret_images = []
+        ret_masks = []
+        ret_pad_masks = []
+
+        for idx in range(image.shape[0]):
+            img_tensor = image[idx]
+            mask_tensor = mask[idx]
+
+            pil_img = tensor2pil(torch.unsqueeze(img_tensor, 0))
+            mask_np = self._prepare_mask(mask_tensor)
+
+            processed_img, processed_mask, pad_mask_np = self._process_single(
+                pil_img, mask_np, ratio, pad_mode, fill_color, extra_expand, padding_mode
+            )
+
+            ret_images.append(pil2tensor(processed_img))
+            ret_masks.append(torch.from_numpy(processed_mask).unsqueeze(0))
+            ret_pad_masks.append(torch.from_numpy(pad_mask_np).unsqueeze(0))
+
+        return (
+            torch.cat(ret_images, dim=0),
+            torch.cat(ret_masks, dim=0),
+            torch.cat(ret_pad_masks, dim=0),
+        )
+
+    def _prepare_mask(self, mask_tensor):
+        mask_np = mask_tensor.detach().cpu().numpy()
+        if mask_np.ndim == 3:
+            mask_np = mask_np[0]
+        return mask_np.astype(np.float32)
+
+    def _process_single(self, image_pil, mask_np, ratio, pad_mode, fill_color, extra_expand, padding_mode):
+        width, height = image_pil.size
+        binary_mask = (mask_np > 0.5).astype(np.uint8)
+
+        coords = np.argwhere(binary_mask > 0)
+        if coords.size == 0:
+            min_y, min_x = 0, 0
+            max_y, max_x = height - 1, width - 1
+        else:
+            min_y = int(coords[:, 0].min())
+            max_y = int(coords[:, 0].max())
+            min_x = int(coords[:, 1].min())
+            max_x = int(coords[:, 1].max())
+
+        bbox_w = max_x - min_x + 1
+        bbox_h = max_y - min_y + 1
+        bbox_w = max(1, bbox_w)
+        bbox_h = max(1, bbox_h)
+
+        target_w_ratio, target_h_ratio = self.RATIO_MAP[ratio]
+        target_ratio = target_w_ratio / target_h_ratio
+
+        if (bbox_w / bbox_h) >= target_ratio:
+            target_w = bbox_w
+            target_h = int(math.ceil(target_w / target_ratio))
+        else:
+            target_h = bbox_h
+            target_w = int(math.ceil(target_h * target_ratio))
+
+        target_w = max(1, target_w)
+        target_h = max(1, target_h)
+
+        center_x = (min_x + max_x) / 2.0
+        center_y = (min_y + max_y) / 2.0
+
+        if padding_mode == "top":
+            start_y = min_y
+            end_y = start_y + target_h
+            start_x = int(round(center_x - target_w / 2.0))
+            end_x = start_x + target_w
+        elif padding_mode == "bottom":
+            end_y = max_y + 1
+            start_y = end_y - target_h
+            start_x = int(round(center_x - target_w / 2.0))
+            end_x = start_x + target_w
+        elif padding_mode == "left":
+            start_x = min_x
+            end_x = start_x + target_w
+            start_y = int(round(center_y - target_h / 2.0))
+            end_y = start_y + target_h
+        elif padding_mode == "right":
+            end_x = max_x + 1
+            start_x = end_x - target_w
+            start_y = int(round(center_y - target_h / 2.0))
+            end_y = start_y + target_h
+        else:
+            start_x = int(round(center_x - target_w / 2.0))
+            start_y = int(round(center_y - target_h / 2.0))
+            end_x = start_x + target_w
+            end_y = start_y + target_h
+
+        pad_left = max(0, -start_x)
+        pad_top = max(0, -start_y)
+        pad_right = max(0, end_x - width)
+        pad_bottom = max(0, end_y - height)
+
+        padded_image = image_pil
+        if pad_left or pad_top or pad_right or pad_bottom:
+            padded_image = smart_pad_image(
+                image_pil, pad_left, pad_top, pad_right, pad_bottom, pad_mode, fill_color
+            )
+
+        final_width, final_height = padded_image.size
+
+        pad_indicator = np.zeros((final_height, final_width), dtype=np.float32)
+        if pad_top > 0:
+            pad_indicator[:pad_top, :] = 1.0
+        if pad_bottom > 0:
+            pad_indicator[-pad_bottom:, :] = 1.0
+        if pad_left > 0:
+            pad_indicator[:, :pad_left] = 1.0
+        if pad_right > 0:
+            pad_indicator[:, -pad_right:] = 1.0
+
+        start_x += pad_left
+        end_x += pad_left
+        start_y += pad_top
+        end_y += pad_top
+
+        padded_width, padded_height = padded_image.size
+        start_x = max(0, min(start_x, padded_width - target_w))
+        start_y = max(0, min(start_y, padded_height - target_h))
+        end_x = start_x + target_w
+        end_y = start_y + target_h
+
+        contact_left = start_x == 0
+        contact_right = end_x == padded_width
+        contact_top = start_y == 0
+        contact_bottom = end_y == padded_height
+
+        ratio_mask = np.zeros((final_height, final_width), dtype=np.float32)
+        ratio_mask[start_y:end_y, start_x:end_x] = 1.0
+
+        needs_extra_pad = contact_left or contact_right or contact_top or contact_bottom
+        if extra_expand > 0 and needs_extra_pad:
+            extra_sides = self._compute_extra_padding(
+                extra_expand, contact_left, contact_top, contact_right, contact_bottom
+            )
+            if any(extra_sides.values()):
+                padded_image = smart_pad_image(
+                    padded_image,
+                    extra_sides["left"],
+                    extra_sides["top"],
+                    extra_sides["right"],
+                    extra_sides["bottom"],
+                    pad_mode=pad_mode,
+                    fill_color=fill_color,
+                )
+                ratio_mask = np.pad(
+                    ratio_mask,
+                    ((extra_sides["top"], extra_sides["bottom"]), (extra_sides["left"], extra_sides["right"])),
+                    mode="constant",
+                    constant_values=0.0,
+                )
+                pad_indicator = np.pad(
+                    pad_indicator,
+                    ((extra_sides["top"], extra_sides["bottom"]), (extra_sides["left"], extra_sides["right"])),
+                    mode="constant",
+                    constant_values=1.0,
+                )
+
+        ratio_mask = np.clip(ratio_mask, 0.0, 1.0)
+        pad_indicator = np.clip(pad_indicator, 0.0, 1.0)
+
+        return padded_image, ratio_mask, pad_indicator
+
+    def _compute_extra_padding(self, extra_expand, contact_left, contact_top, contact_right, contact_bottom):
+        extra_expand = max(0, int(extra_expand))
+        pads = {"top": 0, "bottom": 0, "left": 0, "right": 0}
+        if extra_expand == 0:
+            return pads
+
+        if contact_top:
+            pads["top"] = extra_expand
+        if contact_bottom:
+            pads["bottom"] = extra_expand
+        if contact_left:
+            pads["left"] = extra_expand
+        if contact_right:
+            pads["right"] = extra_expand
+
+        return pads
+
 class ImageMirror:
     """图像镜像节点 - 实现整体图像的水平或垂直镜像"""
     
@@ -593,6 +816,62 @@ class YCImageUntile:
                 out[:, y1:y2, x1:x2, :] = out[:, y1:y2, x1:x2, :] * (1 - mask) + tile
         return(out, )
 
+class YC_MaskColorOverlay:
+    """
+    将遮罩的白色区域应用指定颜色，并设置透明度
+    """
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "mask": ("MASK",),
+                "color": ("STRING", {"default": "#FF0000", "multiline": False}),
+                "opacity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+            }
+        }
+    
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "apply_color_overlay"
+    CATEGORY = "YCNode/Image"
+    
+    def apply_color_overlay(self, image, mask, color, opacity):
+        # 将十六进制颜色转换为RGB
+        hex_color = color.lstrip('#')
+        rgb_color = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        
+        # 转换为numpy数组
+        img_np = image.cpu().numpy()
+        mask_np = mask.cpu().numpy()
+        
+        # 确保mask是二维的
+        if len(mask_np.shape) == 3 and mask_np.shape[-1] == 1:
+            mask_np = mask_np.squeeze(-1)
+        
+        # 创建输出图像
+        result = img_np.copy()
+        
+        # 对每个批次处理
+        for b in range(img_np.shape[0]):
+            # 创建颜色层
+            color_layer = np.zeros_like(img_np[b])
+            color_layer[:, :, 0] = rgb_color[0] / 255.0  # R
+            color_layer[:, :, 1] = rgb_color[1] / 255.0  # G
+            color_layer[:, :, 2] = rgb_color[2] / 255.0  # B
+            
+            # 应用遮罩
+            mask_3d = np.stack([mask_np[b]] * 3, axis=-1)
+            
+            # 混合原图和颜色层
+            result[b] = img_np[b] * (1 - mask_3d * opacity) + color_layer * mask_3d * opacity
+        
+        # 转换回torch张量
+        result_tensor = torch.from_numpy(result)
+        
+        return (result_tensor,)
+
+
 # 注册所有节点
 NODE_CLASS_MAPPINGS = {
     "YCImageSmartPad": YCImageSmartPad,
@@ -601,7 +880,9 @@ NODE_CLASS_MAPPINGS = {
     "ImageRotate": ImageRotate,
     "ImageMosaic": ImageMosaic,
     "YCImageTile": YCImageTile,
-    "YCImageUntile": YCImageUntile
+    "YCImageUntile": YCImageUntile,
+    "YC_MaskColorOverlay": YC_MaskColorOverlay,
+    "YCMaskRatioPadCrop": YCMaskRatioPadCrop
 }
 
 # 显示名称映射
@@ -612,6 +893,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImageRotate": "Image Rotate", 
     "ImageMosaic": "Image Mosaic",
     "YCImageTile": "YC Image Tile",
-    "YCImageUntile": "YC Image Untile"
+    "YCImageUntile": "YC Image Untile",
+    "YC_MaskColorOverlay":"YC Mask Color Overlay",
+    "YCMaskRatioPadCrop": "Mask Ratio Pad (YC)"
 } 
 # yicheng author
