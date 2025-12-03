@@ -160,8 +160,8 @@ class ImageBlendResize:
             }
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("image",)
+    RETURN_TYPES = ("IMAGE", "MASK")
+    RETURN_NAMES = ("image", "mask")
     FUNCTION = "blend_resize"
     CATEGORY = "YCNode/Image"
 
@@ -173,6 +173,7 @@ class ImageBlendResize:
         l_images = []
         l_masks = []
         ret_images = []
+        ret_masks = []
         
         # 处理背景图batch
         for b in background_image:
@@ -234,11 +235,16 @@ class ImageBlendResize:
             # 应用mask
             bg_pil.paste(result_pil, (0, 0), mask=full_mask)
             
+            output_mask_array = np.array(full_mask).astype(np.float32) / 255.0
+            output_mask_array = 1.0 - output_mask_array  
+            output_mask_tensor = torch.from_numpy(output_mask_array).unsqueeze(0)
+            
             # 转换回tensor并添加到结果列表
             ret_images.append(pil2tensor(bg_pil))
+            ret_masks.append(output_mask_tensor)
         
         # 返回结果
-        return (torch.cat(ret_images, dim=0),)
+        return (torch.cat(ret_images, dim=0), torch.cat(ret_masks, dim=0))
 
 # 节点注册
 NODE_CLASS_MAPPINGS = {
