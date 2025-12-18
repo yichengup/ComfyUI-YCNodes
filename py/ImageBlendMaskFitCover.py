@@ -85,10 +85,14 @@ class ImageBlendMaskFitCover:
                 "background_image": ("IMAGE",),
                 "layer_image": ("IMAGE",),
                 "layer_mask": ("MASK",),
+                "layer_alpha_mask": ("MASK",),
                 "blend_mode": (BLEND_MODES,),
                 "rotation": ("FLOAT", {"default": 0.0, "min": -180.0, "max": 180.0, "step": 0.5}),
                 "opacity": ("INT", {"default": 100, "min": 0, "max": 100, "step": 1}),
                 "invert_mask": ("BOOLEAN", {"default": False, "tooltip": "反转定位遮罩1"}),
+                "offset_x": ("INT", {"default": 0, "min": -4096, "max": 4096, "step": 1, "tooltip": "定位遮罩整体左右偏移（+为右，-为左，像素）"}),
+                "offset_y": ("INT", {"default": 0, "min": -4096, "max": 4096, "step": 1, "tooltip": "定位遮罩整体上下偏移（+为下，-为上，像素）"}),
+                "bbox_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 4.0, "step": 0.05, "tooltip": "定位 bbox 额外缩放系数（>1 放大，<1 缩小）"}),
             },
         }
 
@@ -102,26 +106,41 @@ class ImageBlendMaskFitCover:
         background_image,
         layer_image,
         layer_mask,
+        layer_alpha_mask,
         blend_mode,
         rotation,
         opacity,
         invert_mask,
+        offset_x,
+        offset_y,
+        bbox_scale,
     ):
         ret_images = []
         max_batch = max(
             len(background_image),
             len(layer_image),
             len(layer_mask),
+            len(layer_alpha_mask),
         )
 
         for i in range(max_batch):
             bg_tensor = background_image[i] if i < len(background_image) else background_image[-1]
             fg_tensor = layer_image[i] if i < len(layer_image) else layer_image[-1]
             mask_tensor = layer_mask[i] if i < len(layer_mask) else layer_mask[-1]
+            alpha_mask_tensor = layer_alpha_mask[i] if i < len(layer_alpha_mask) else layer_alpha_mask[-1]
 
             bg_pil = tensor2pil(bg_tensor)
             fg_pil = tensor2pil(fg_tensor)
             mask_pil = tensor2pil(mask_tensor).convert("L")
+            alpha_mask_pil = tensor2pil(alpha_mask_tensor).convert("L")
+
+            # 将 layer_image 与新增遮罩先合成为“透明前景”
+            if alpha_mask_pil.size != fg_pil.size:
+                alpha_mask_pil = alpha_mask_pil.resize(fg_pil.size, Image.LANCZOS)
+            fg_rgba = fg_pil.convert("RGBA")
+            r, g, b, a = fg_rgba.split()
+            combined_fg_alpha = ImageChops.multiply(a, alpha_mask_pil)
+            fg_rgba = Image.merge("RGBA", (r, g, b, combined_fg_alpha))
 
             # 尺寸适配到背景
             if mask_pil.size != bg_pil.size:
@@ -131,15 +150,46 @@ class ImageBlendMaskFitCover:
                 mask_pil = Image.fromarray(255 - np.array(mask_pil))
 
             bbox = get_mask_bbox(mask_pil)
-            box_w = bbox[2] - bbox[0]
-            box_h = bbox[3] - bbox[1]
+            box_x0, box_y0, box_x1, box_y1 = bbox
+            box_w = box_x1 - box_x0
+            box_h = box_y1 - box_y0
+
+            # 在定位遮罩的 bbox 基础上，应用额外缩放和偏移，获得更可控的放置区域
+            if box_w > 0 and box_h > 0:
+                bg_w, bg_h = bg_pil.size
+                # 原 bbox 中心
+                cx = box_x0 + box_w * 0.5
+                cy = box_y0 + box_h * 0.5
+
+                # 应用缩放
+                scaled_w = max(1, int(box_w * bbox_scale))
+                scaled_h = max(1, int(box_h * bbox_scale))
+
+                # 应用偏移（像素）
+                cx = cx + offset_x
+                cy = cy + offset_y
+
+                # 重新计算缩放+偏移后的 bbox，并限制在背景范围内
+                new_x0 = int(round(cx - scaled_w * 0.5))
+                new_y0 = int(round(cy - scaled_h * 0.5))
+                new_x1 = new_x0 + scaled_w
+                new_y1 = new_y0 + scaled_h
+
+                new_x0 = max(0, min(new_x0, bg_w - 1))
+                new_y0 = max(0, min(new_y0, bg_h - 1))
+                new_x1 = max(new_x0 + 1, min(new_x1, bg_w))
+                new_y1 = max(new_y0 + 1, min(new_y1, bg_h))
+
+                box_x0, box_y0, box_x1, box_y1 = new_x0, new_y0, new_x1, new_y1
+                box_w = box_x1 - box_x0
+                box_h = box_y1 - box_y0
 
             # 前景等比例放大覆盖定位 bbox
-            fg_resized = resize_fg_cover_bbox(fg_pil, (box_w, box_h), rotation)
+            fg_resized = resize_fg_cover_bbox(fg_rgba, (box_w, box_h), rotation)
 
             # 计算中心对齐的粘贴位置
-            paste_x = bbox[0] + (box_w - fg_resized.width) // 2
-            paste_y = bbox[1] + (box_h - fg_resized.height) // 2
+            paste_x = box_x0 + (box_w - fg_resized.width) // 2
+            paste_y = box_y0 + (box_h - fg_resized.height) // 2
 
             fg_canvas = Image.new("RGBA", bg_pil.size, (0, 0, 0, 0))
             fg_resized_rgba = fg_resized.convert("RGBA")
