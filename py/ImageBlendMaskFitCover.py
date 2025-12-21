@@ -85,7 +85,6 @@ class ImageBlendMaskFitCover:
                 "background_image": ("IMAGE",),
                 "layer_image": ("IMAGE",),
                 "layer_mask": ("MASK",),
-                "layer_alpha_mask": ("MASK",),
                 "blend_mode": (BLEND_MODES,),
                 "rotation": ("FLOAT", {"default": 0.0, "min": -180.0, "max": 180.0, "step": 0.5}),
                 "opacity": ("INT", {"default": 100, "min": 0, "max": 100, "step": 1}),
@@ -93,6 +92,9 @@ class ImageBlendMaskFitCover:
                 "offset_x": ("INT", {"default": 0, "min": -4096, "max": 4096, "step": 1, "tooltip": "定位遮罩整体左右偏移（+为右，-为左，像素）"}),
                 "offset_y": ("INT", {"default": 0, "min": -4096, "max": 4096, "step": 1, "tooltip": "定位遮罩整体上下偏移（+为下，-为上，像素）"}),
                 "bbox_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 4.0, "step": 0.05, "tooltip": "定位 bbox 额外缩放系数（>1 放大，<1 缩小）"}),
+            },
+            "optional": {
+                "layer_alpha_mask": ("MASK",),
             },
         }
 
@@ -106,7 +108,6 @@ class ImageBlendMaskFitCover:
         background_image,
         layer_image,
         layer_mask,
-        layer_alpha_mask,
         blend_mode,
         rotation,
         opacity,
@@ -114,25 +115,40 @@ class ImageBlendMaskFitCover:
         offset_x,
         offset_y,
         bbox_scale,
+        layer_alpha_mask=None,
     ):
         ret_images = []
-        max_batch = max(
-            len(background_image),
-            len(layer_image),
-            len(layer_mask),
-            len(layer_alpha_mask),
-        )
+        if layer_alpha_mask is not None:
+            max_batch = max(
+                len(background_image),
+                len(layer_image),
+                len(layer_mask),
+                len(layer_alpha_mask),
+            )
+        else:
+            max_batch = max(
+                len(background_image),
+                len(layer_image),
+                len(layer_mask),
+            )
 
         for i in range(max_batch):
             bg_tensor = background_image[i] if i < len(background_image) else background_image[-1]
             fg_tensor = layer_image[i] if i < len(layer_image) else layer_image[-1]
             mask_tensor = layer_mask[i] if i < len(layer_mask) else layer_mask[-1]
-            alpha_mask_tensor = layer_alpha_mask[i] if i < len(layer_alpha_mask) else layer_alpha_mask[-1]
+            if layer_alpha_mask is not None:
+                alpha_mask_tensor = layer_alpha_mask[i] if i < len(layer_alpha_mask) else layer_alpha_mask[-1]
+            else:
+                alpha_mask_tensor = None
 
             bg_pil = tensor2pil(bg_tensor)
             fg_pil = tensor2pil(fg_tensor)
             mask_pil = tensor2pil(mask_tensor).convert("L")
-            alpha_mask_pil = tensor2pil(alpha_mask_tensor).convert("L")
+            if alpha_mask_tensor is not None:
+                alpha_mask_pil = tensor2pil(alpha_mask_tensor).convert("L")
+            else:
+                # 未提供 layer_alpha_mask 时，等价于全白遮罩（不改变原始前景透明度）
+                alpha_mask_pil = Image.new("L", fg_pil.size, 255)
 
             # 将 layer_image 与新增遮罩先合成为“透明前景”
             if alpha_mask_pil.size != fg_pil.size:
