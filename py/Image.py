@@ -905,6 +905,95 @@ class YC_MaskColorOverlay:
         
         return (result_tensor,)
 
+class ycImageTilem:
+    """图像拼铺节点 - 将一张图拼铺成多行多列的大图"""
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "rows": ("INT", {
+                    "default": 2,
+                    "min": 1,
+                    "max": 100,
+                    "step": 1
+                }),
+                "cols": ("INT", {
+                    "default": 2,
+                    "min": 1,
+                    "max": 100,
+                    "step": 1
+                }),
+                "spacing": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 500,
+                    "step": 1
+                }),
+                "background_color": ("STRING", {
+                    "default": "#FFFFFF",
+                    "multiline": False
+                }),
+            }
+        }
+    
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("tiled_image",)
+    FUNCTION = "tile_image"
+    CATEGORY = "YCNode/Image"
+    
+    def tile_image(self, image, rows, cols, spacing, background_color):
+        """
+        将输入图像拼铺成指定行列数的大图
+        
+        Args:
+            image: 输入图像 (torch tensor)
+            rows: 行数
+            cols: 列数
+            spacing: 间距（像素）
+            background_color: 背景颜色（十六进制格式，如 #FFFFFF）
+        
+        Returns:
+            拼铺后的大图
+        """
+        # 转换背景颜色
+        bg_color = hex_to_rgb(background_color)
+        
+        # 处理batch，取第一张图
+        if image.dim() == 4:
+            input_image = image[0]
+        else:
+            input_image = image
+        
+        # 转换为PIL图像
+        pil_image = tensor2pil(input_image)
+        img_width, img_height = pil_image.size
+        
+        # 计算最终画布尺寸
+        # 总宽度 = 列数 * 图片宽度 + (列数 - 1) * 间距
+        # 总高度 = 行数 * 图片高度 + (行数 - 1) * 间距
+        canvas_width = cols * img_width + (cols - 1) * spacing
+        canvas_height = rows * img_height + (rows - 1) * spacing
+        
+        # 创建画布
+        canvas = Image.new('RGB', (canvas_width, canvas_height), bg_color)
+        
+        # 拼铺图像
+        for row in range(rows):
+            for col in range(cols):
+                # 计算当前图像在画布中的位置
+                x = col * (img_width + spacing)
+                y = row * (img_height + spacing)
+                
+                # 将图像粘贴到画布上
+                canvas.paste(pil_image, (x, y))
+        
+        # 转换回torch tensor
+        result_tensor = pil2tensor(canvas)
+        
+        return (result_tensor,)
+
 
 # 注册所有节点
 NODE_CLASS_MAPPINGS = {
@@ -916,7 +1005,8 @@ NODE_CLASS_MAPPINGS = {
     "YCImageTile": YCImageTile,
     "YCImageUntile": YCImageUntile,
     "YC_MaskColorOverlay": YC_MaskColorOverlay,
-    "YCMaskRatioPadCrop": YCMaskRatioPadCrop
+    "YCMaskRatioPadCrop": YCMaskRatioPadCrop,
+    "ycImageTilem": ycImageTilem
 }
 
 # 显示名称映射
@@ -929,6 +1019,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "YCImageTile": "YC Image Tile",
     "YCImageUntile": "YC Image Untile",
     "YC_MaskColorOverlay":"YC Mask Color Overlay",
-    "YCMaskRatioPadCrop": "Mask Ratio Pad (YC)"
+    "YCMaskRatioPadCrop": "Mask Ratio Pad (YC)",
+    "ycImageTilem": "Image Tile merg"
 } 
 # yicheng author
