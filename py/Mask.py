@@ -1,11 +1,9 @@
-import cv2
-import numpy as np
 import torch
-import torchvision.transforms as T
-import comfy.model_management
-import folder_paths
-import random
-from nodes import SaveImage
+import numpy as np
+import cv2
+
+# 定义最大分辨率常量
+MAX_RESOLUTION = 8192
 
 # 节点类定义
 class MaskTopNFilter:
@@ -95,7 +93,8 @@ class MaskSplitFilter:
         return min_x, min_y
 
     def segment_mask(self, mask):
-        # 保存原始设备信息
+        # 保存原始mask和设备信息
+        original_mask = mask
         device = mask.device if isinstance(mask, torch.Tensor) else torch.device('cpu')
         
         # 确保mask是正确的形状并转换为numpy数组
@@ -121,9 +120,9 @@ class MaskSplitFilter:
             
             # 创建每个轮廓的mask
             for i, contour in enumerate(contours):
-                mask = np.zeros_like(mask_np)
-                cv2.drawContours(mask, [contour], -1, 255, -1)
-                contour_masks[i] = mask
+                contour_mask = np.zeros_like(mask_np)
+                cv2.drawContours(contour_mask, [contour], -1, 255, -1)
+                contour_masks[i] = contour_mask
 
             # 处理每个轮廓
             processed_indices = set()
@@ -154,10 +153,10 @@ class MaskSplitFilter:
         
         # 如果没有找到任何轮廓，返回原始mask
         if not mask_info:
-            if isinstance(mask, torch.Tensor):
-                return (mask,)
+            if isinstance(original_mask, torch.Tensor):
+                return (original_mask,)
             else:
-                mask_tensor = torch.from_numpy(mask).float()
+                mask_tensor = torch.from_numpy(original_mask).float()
                 if len(mask_tensor.shape) == 2:
                     mask_tensor = mask_tensor.unsqueeze(0)
                 mask_tensor = mask_tensor.to(device)
@@ -177,35 +176,6 @@ class MaskSplitFilter:
         return (result_masks,)
 
 
-
-class MaskPreviewNode(SaveImage):
-    def __init__(self):
-        self.output_dir = folder_paths.get_temp_directory()
-        self.type = "temp"
-        self.prefix_append = "_temp_" + ''.join(random.choice("abcdefghijklmnopqrstupvxyz") for x in range(5))
-        self.compress_level = 4
-    
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "mask": ("MASK",),
-            },
-            "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
-        }
-    
-    RETURN_TYPES = ()
-    RETURN_NAMES = ()
-    FUNCTION = "preview_mask"
-    CATEGORY = "YCNode/Mask"
-    OUTPUT_NODE = True
-    
-    def preview_mask(self, mask, prompt=None, extra_pnginfo=None):
-        # 处理批处理维度和通道
-        preview = mask.reshape((-1, 1, mask.shape[-2], mask.shape[-1]))
-        preview = preview.movedim(1, -1).expand(-1, -1, -1, 3)
-        preview = torch.clamp(preview, 0.0, 1.0)
-        return self.save_images(preview, "mask_preview", prompt, extra_pnginfo)
 
 class MaskContourFillNode:
     def __init__(self):
@@ -314,8 +284,7 @@ Sets new min and max values for the mask.
         return (scaled_mask, )
 
 
-def get_mask_polygon(self, mask_np):
-    import cv2
+def get_mask_polygon(mask_np):
     """Helper function to get polygon points from mask"""
     # Find contours
     contours, _ = cv2.findContours(mask_np, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -518,66 +487,247 @@ class MaskResizeToRatio:
         
         return (result_tensor,)
 
-class YCMaskBlur:
+class YCMaskDirectionExpand:
+    """
+    遮罩方向性扩展/缩减节点 (XY解耦版)
+    
+    功能：
+    - 完美实现单个方向的独立扩展/缩减，互不干扰。
+    - 解决缩减时"误杀"细长物体或带动其他方向的问题。
+    - 逻辑：通过分离垂直和水平操作通道，实现精准的单向控制。
+    
+    参数：
+    - 正数：向外扩展 (Expand)
+    - 负数：向内缩减 (Shrink)
+    """
+    
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "mask": ("MASK",),
-                "amount": ("INT", { "default": 6, "min": 0, "max": 256, "step": 1, }),
-                "device": (["auto", "cpu", "gpu"],),
+                "top": ("INT", {
+                    "default": 0,
+                    "min": -10000,
+                    "max": 10000,
+                    "step": 1,
+                    "tooltip": "正数：向上生长 | 负数：从顶部向下裁切"
+                }),
+                "bottom": ("INT", {
+                    "default": 0,
+                    "min": -10000,
+                    "max": 10000,
+                    "step": 1,
+                    "tooltip": "正数：向下生长 | 负数：从底部向上裁切"
+                }),
+                "left": ("INT", {
+                    "default": 0,
+                    "min": -10000,
+                    "max": 10000,
+                    "step": 1,
+                    "tooltip": "正数：向左生长 | 负数：从左侧向右裁切"
+                }),
+                "right": ("INT", {
+                    "default": 0,
+                    "min": -10000,
+                    "max": 10000,
+                    "step": 1,
+                    "tooltip": "正数：向右生长 | 负数：从右侧向左裁切"
+                }),
+            }
+        }
+    
+    RETURN_TYPES = ("MASK",)
+    RETURN_NAMES = ("mask",)
+    FUNCTION = "process_mask"
+    CATEGORY = "YCNode/Mask"
+    
+    def process_mask(self, mask, top, bottom, left, right):
+        if top == 0 and bottom == 0 and left == 0 and right == 0:
+            return (mask,)
+
+        # --- 参数分离 ---
+        # 扩展参数 (只取正值)
+        exp_t, exp_b = max(0, top), max(0, bottom)
+        exp_l, exp_r = max(0, left), max(0, right)
+        
+        # 缩减参数 (只取负值并转正)
+        shr_t, shr_b = abs(min(0, top)), abs(min(0, bottom))
+        shr_l, shr_r = abs(min(0, left)), abs(min(0, right))
+
+        mask_np = mask.cpu().numpy()
+        result_masks = []
+
+        # --- 核配置 (Kernel Configuration) ---
+        # 关键修改：XY方向使用独立的 1D Kernel，彻底杜绝干扰
+        
+        # 1. 垂直扩展 (Vertical Expand) - 核形状 (1, H)
+        do_exp_v = (exp_t + exp_b) > 0
+        if do_exp_v:
+            k_exp_v = np.ones((exp_t + exp_b + 1, 1), dtype=np.uint8)
+            # 锚点Y = 底部扩展量 (逻辑：想向上扩，核要伸到下面，锚点在底部的相对反方向，即 exp_b)
+            # 修正：锚点Y = exp_b。
+            # 验证：Top=10, Bottom=0 -> H=11, AnchorY=0 (Top). 
+            # 锚点在顶，核向下延伸，像素检测下方(白)，变白 -> 向上生长。正确。
+            anchor_exp_v = (0, exp_b) 
+
+        # 2. 水平扩展 (Horizontal Expand) - 核形状 (W, 1)
+        do_exp_h = (exp_l + exp_r) > 0
+        if do_exp_h:
+            k_exp_h = np.ones((1, exp_l + exp_r + 1), dtype=np.uint8)
+            # 锚点X = 右侧扩展量 (逻辑同上，anchor=exp_r)
+            anchor_exp_h = (exp_r, 0)
+
+        # 3. 垂直缩减 (Vertical Shrink) - 核形状 (1, H)
+        do_shr_v = (shr_t + shr_b) > 0
+        if do_shr_v:
+            k_shr_v = np.ones((shr_t + shr_b + 1, 1), dtype=np.uint8)
+            # 锚点Y = 顶部缩减量 (逻辑：从顶缩，需检查上方，核要伸到上面，锚点在底，即 shr_t)
+            # 验证：TopShrink=10 (T=10, B=0) -> H=11, AnchorY=10 (Bottom).
+            # 锚点在底，核向上延伸，检测上方(黑)，变黑 -> 从顶变黑。正确。
+            anchor_shr_v = (0, shr_t)
+
+        # 4. 水平缩减 (Horizontal Shrink) - 核形状 (W, 1)
+        do_shr_h = (shr_l + shr_r) > 0
+        if do_shr_h:
+            k_shr_h = np.ones((1, shr_l + shr_r + 1), dtype=np.uint8)
+            # 锚点X = 左侧缩减量 (逻辑同上，anchor=shr_l)
+            anchor_shr_h = (shr_l, 0)
+
+        for m in mask_np:
+            img = (m * 255).astype(np.uint8)
+            
+            # 顺序执行：先扩展后缩减 (顺序可调，通常这样最符合直觉)
+            # 因为是分离的XY操作，所以不会出现"扩展X导致Y方向变圆"的情况
+            
+            # --- 执行扩展 ---
+            if do_exp_v:
+                img = cv2.dilate(img, k_exp_v, anchor=anchor_exp_v, iterations=1, borderType=cv2.BORDER_CONSTANT, borderValue=0)
+            if do_exp_h:
+                img = cv2.dilate(img, k_exp_h, anchor=anchor_exp_h, iterations=1, borderType=cv2.BORDER_CONSTANT, borderValue=0)
+            
+            # --- 执行缩减 ---
+            # 关键：这里使用的是 erode，但因为核宽度/高度为1，所以只在特定轴向生效
+            # 即使是一条细线，只要其长度超过缩减量，就不会被消灭
+            if do_shr_v:
+                img = cv2.erode(img, k_shr_v, anchor=anchor_shr_v, iterations=1, borderType=cv2.BORDER_CONSTANT, borderValue=0)
+            if do_shr_h:
+                img = cv2.erode(img, k_shr_h, anchor=anchor_shr_h, iterations=1, borderType=cv2.BORDER_CONSTANT, borderValue=0)
+            
+            result_masks.append(img.astype(np.float32) / 255.0)
+        
+        result_tensor = torch.from_numpy(np.stack(result_masks))
+        return (result_tensor,)
+
+
+class MaskComposite:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "destination": ("MASK",),
+                "source": ("MASK",),
+                "x": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
+                "y": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
+                "operation": (["multiply", "add", "subtract", "and", "or", "xor", "overlay", "natural_blend"],),
+                "opacity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "blend_power": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "调整自然混合的强度，值越高越接近简单相加"}),
             }
         }
 
-    RETURN_TYPES = ("MASK",)
-    FUNCTION = "execute"
     CATEGORY = "YCNode/Mask"
 
-    def execute(self, mask, amount, device):
-        if amount == 0:
-            return (mask,)
+    RETURN_TYPES = ("MASK",)
+    RETURN_NAMES = ("mask",)
+    FUNCTION = "combine"
 
-        if "gpu" == device:
-            mask = mask.to(comfy.model_management.get_torch_device())
-        elif "cpu" == device:
-            mask = mask.to('cpu')
+    def combine(self, destination, source, x, y, operation, opacity=1.0, blend_power=0.5):
+        output = destination.reshape((-1, destination.shape[-2], destination.shape[-1])).clone()
+        source = source.reshape((-1, source.shape[-2], source.shape[-1]))
 
-        if amount % 2 == 0:
-            amount+= 1
+        left, top = (x, y,)
+        right, bottom = (min(left + source.shape[-1], output.shape[-1]), min(top + source.shape[-2], output.shape[-2]))
+        visible_width, visible_height = (right - left, bottom - top,)
+        
+        # 确保不超出 source 的实际尺寸
+        visible_height = min(visible_height, source.shape[-2])
+        visible_width = min(visible_width, source.shape[-1])
 
-        if mask.dim() == 2:
-            mask = mask.unsqueeze(0)
+        source_portion = source[:, :visible_height, :visible_width]
+        destination_portion = output[:, top:bottom, left:right]
 
-        mask = T.functional.gaussian_blur(mask.unsqueeze(1), amount).squeeze(1)
+        # 应用不透明度
+        if opacity < 1.0:
+            source_portion = source_portion * opacity
 
-        if "gpu" == device or "cpu" == device:
-            mask = mask.to(comfy.model_management.intermediate_device())
+        if operation == "multiply":
+            output[:, top:bottom, left:right] = destination_portion * source_portion
+        elif operation == "add":
+            output[:, top:bottom, left:right] = destination_portion + source_portion
+        elif operation == "subtract":
+            output[:, top:bottom, left:right] = destination_portion - source_portion
+        elif operation == "and":
+            output[:, top:bottom, left:right] = torch.bitwise_and(destination_portion.round().bool(), source_portion.round().bool()).float()
+        elif operation == "or":
+            output[:, top:bottom, left:right] = torch.bitwise_or(destination_portion.round().bool(), source_portion.round().bool()).float()
+        elif operation == "xor":
+            output[:, top:bottom, left:right] = torch.bitwise_xor(destination_portion.round().bool(), source_portion.round().bool()).float()
+        elif operation == "overlay":
+            # 实现Photoshop的overlay模式
+            # 当底图<0.5时，结果=2*底图*叠加图；当底图>=0.5时，结果=1-2*(1-底图)*(1-叠加图)
+            low_mask = destination_portion < 0.5
+            high_mask = ~low_mask
+            result = torch.zeros_like(destination_portion)
+            result[low_mask] = 2 * destination_portion[low_mask] * source_portion[low_mask]
+            result[high_mask] = 1 - 2 * (1 - destination_portion[high_mask]) * (1 - source_portion[high_mask])
+            output[:, top:bottom, left:right] = result
+        elif operation == "natural_blend":
+            # 自然混合模式 - 专为遮罩的自然过渡设计
+            # 在暗部使用screen模式，在亮部使用加权平均
+            # 公式: dest + src - dest*src (类似screen) 加上 权重控制
+            
+            # 基础混合（类似screen模式，但保留更多亮度信息）
+            base_blend = destination_portion + source_portion - destination_portion * source_portion
+            
+            # 加权求和（在白色区域避免过亮）
+            sum_weighted = torch.clamp(destination_portion + source_portion, 0.0, 1.0)
+            
+            # 计算混合因子，决定使用多少screen效果和多少加权平均
+            # 当像素越亮时(接近1)，越倾向于使用加权平均而非screen
+            bright_areas = (destination_portion + source_portion) / 2.0
+            blend_factor = torch.pow(bright_areas, 2.0 - blend_power)  # 可调整的指数，控制过渡点
+            
+            # 根据混合因子在两种模式间平滑过渡
+            result = base_blend * (1.0 - blend_factor) + sum_weighted * blend_factor
+            
+            output[:, top:bottom, left:right] = result
 
-        return(mask,)
+        output = torch.clamp(output, 0.0, 1.0)
+
+        return (output,)
+
 
 # 节点注册
 NODE_CLASS_MAPPINGS = {
     "MaskTopNFilter": MaskTopNFilter,
     "MaskSplitFilter": MaskSplitFilter,
-    "MaskPreviewNode": MaskPreviewNode,
     "MaskContourFillNode": MaskContourFillNode,
     "YCRemapMaskRange": YCRemapMaskRange,
     "MaskFilterBySolidity": MaskFilterBySolidity,
     "MaskResizeToRatio": MaskResizeToRatio,
-    "YCMaskBlur": YCMaskBlur
+    "YCMaskDirectionExpand": YCMaskDirectionExpand,
+    "MaskComposite": MaskComposite,
 }
+
 
 # 节点显示名称
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MaskTopNFilter": "Mask Top-N Filter",
     "MaskSplitFilter": "Mask Split Filter",
-    "MaskPreviewNode": "MaskPreview_YC",
     "MaskContourFillNode": "MaskContourFill_YC",
     "YCRemapMaskRange": "Remap Mask Range (YC)",
     "MaskFilterBySolidity": "Filter Mask By Solidity",
     "MaskResizeToRatio": "Resize Mask To Ratio (YC)",
-    "YCMaskBlur": "Mask Blur (YC)"
+    "YCMaskDirectionExpand": "Mask Direction Expand (YC)",
+    "MaskComposite": "Mask Composite (YC)",
 }
-
-
-
