@@ -620,7 +620,7 @@ class YCMaskDirectionExpand:
         return (result_tensor,)
 
 
-class MaskComposite:
+class MaskCompositeYC:
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -716,7 +716,7 @@ NODE_CLASS_MAPPINGS = {
     "MaskFilterBySolidity": MaskFilterBySolidity,
     "MaskResizeToRatio": MaskResizeToRatio,
     "YCMaskDirectionExpand": YCMaskDirectionExpand,
-    "MaskComposite": MaskComposite,
+    "MaskCompositeYC": MaskCompositeYC,
 }
 
 
@@ -729,5 +729,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MaskFilterBySolidity": "Filter Mask By Solidity",
     "MaskResizeToRatio": "Resize Mask To Ratio (YC)",
     "YCMaskDirectionExpand": "Mask Direction Expand (YC)",
-    "MaskComposite": "Mask Composite (YC)",
+    "MaskCompositeYC": "Mask Composite YC",
 }
