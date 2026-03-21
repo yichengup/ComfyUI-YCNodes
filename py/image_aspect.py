@@ -16,13 +16,21 @@ def parse_aspect_ratio(aspect_str: str) -> tuple:
     解析宽高比字符串或具体尺寸
     
     Args:
-        aspect_str: 宽高比字符串（如 "16:9"）或具体尺寸（如 "768x1024"）
+        aspect_str: 宽高比字符串（如 "16:9"）或具体尺寸（如 "768x1024"）或带标注（如 "1792x2400 3:4"）
         
     Returns:
-        (width_value, height_value, is_absolute_size) 元组
+        (width_value, height_value, is_absolute_size, label_ratio) 元组
         - is_absolute_size: True表示具体尺寸，False表示比例
+        - label_ratio: 用户标注的比例字符串（如果有），否则为None
     """
     aspect_str = aspect_str.strip()
+    label_ratio = None
+    
+    # 检查是否有空格分隔的标注格式（如 "1792x2400 3:4"）
+    if ' ' in aspect_str:
+        parts = aspect_str.split(' ', 1)
+        aspect_str = parts[0].strip()
+        label_ratio = parts[1].strip()
     
     # 尝试解析 "宽x高" 或 "宽:高" 格式
     for separator in ['x', 'X', '*', '×', ':']:
@@ -36,7 +44,7 @@ def parse_aspect_ratio(aspect_str: str) -> tuple:
                         # 判断是具体尺寸还是比例
                         # 如果宽度和高度都 >= 64，判定为具体尺寸
                         is_absolute = (w >= 64 and h >= 64)
-                        return (w, h, is_absolute)
+                        return (w, h, is_absolute, label_ratio)
                 except ValueError:
                     pass
     
@@ -44,12 +52,12 @@ def parse_aspect_ratio(aspect_str: str) -> tuple:
     try:
         ratio = float(aspect_str)
         if ratio > 0:
-            return (ratio, 1.0, False)
+            return (ratio, 1.0, False, label_ratio)
     except ValueError:
         pass
     
     # 默认返回 16:9 比例
-    return (16.0, 9.0, False)
+    return (16.0, 9.0, False, label_ratio)
 
 
 class ImageAspectExpand:
@@ -119,18 +127,19 @@ class ImageAspectExpand:
                 orig_aspect = orig_width / orig_height
                 
                 # 选择最接近的比例或尺寸
+                label_ratio = None
                 if len(ratio_lines) == 1:
                     # 单行：直接使用
-                    target_w, target_h, is_absolute = parse_aspect_ratio(ratio_lines[0])
+                    target_w, target_h, is_absolute, label_ratio = parse_aspect_ratio(ratio_lines[0])
                 else:
                     # 多行：选择最接近原图比例的
                     best_ratio_str = ratio_lines[0]
-                    best_w, best_h, best_is_absolute = parse_aspect_ratio(best_ratio_str)
+                    best_w, best_h, best_is_absolute, best_label = parse_aspect_ratio(best_ratio_str)
                     best_aspect = best_w / best_h
                     min_diff = abs(best_aspect - orig_aspect)
                     
                     for ratio_str in ratio_lines[1:]:
-                        w, h, is_abs = parse_aspect_ratio(ratio_str)
+                        w, h, is_abs, lbl = parse_aspect_ratio(ratio_str)
                         aspect = w / h
                         diff = abs(aspect - orig_aspect)
                         
@@ -140,15 +149,25 @@ class ImageAspectExpand:
                             best_h = h
                             best_is_absolute = is_abs
                             best_aspect = aspect
+                            best_label = lbl
                     
                     target_w = best_w
                     target_h = best_h
                     is_absolute = best_is_absolute
+                    label_ratio = best_label
                 
                 target_aspect = target_w / target_h
                 
-                # 将选中的尺寸转换为比例格式输出
-                selected_ratio_str = self._format_aspect_ratio(int(target_w), int(target_h))
+                # 确定输出的比例字符串
+                if label_ratio:
+                    # 如果有用户标注的比例，直接使用
+                    selected_ratio_str = label_ratio
+                elif is_absolute:
+                    # 具体尺寸且无标注，使用常见比例匹配
+                    selected_ratio_str = self._match_common_ratio(int(target_w), int(target_h))
+                else:
+                    # 纯比例输入，格式化输出
+                    selected_ratio_str = self._format_aspect_ratio(int(target_w), int(target_h))
                 
                 # 根据是否为具体尺寸，采用不同的处理方式
                 if is_absolute:
@@ -237,6 +256,37 @@ class ImageAspectExpand:
         if len(hex_color) == 6:
             return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
         return (0, 0, 0)
+    
+    def _match_common_ratio(self, width: int, height: int) -> str:
+        """
+        匹配常见比例
+        如果尺寸接近常见比例（误差 < 1%），返回常见比例字符串
+        否则返回简化后的比例
+        """
+        actual_ratio = width / height
+        
+        # 常见比例列表 (比例值, 显示字符串)
+        common_ratios = [
+            (1.0, "1:1"),
+            (4/3, "4:3"),
+            (3/4, "3:4"),
+            (16/9, "16:9"),
+            (9/16, "9:16"),
+            (21/9, "21:9"),
+            (9/21, "9:21"),
+            (3/2, "3:2"),
+            (2/3, "2:3"),
+            (5/4, "5:4"),
+            (4/5, "4:5"),
+        ]
+        
+        # 检查是否接近常见比例（误差 < 1%）
+        for ratio_value, ratio_str in common_ratios:
+            if abs(actual_ratio - ratio_value) / ratio_value < 0.01:
+                return ratio_str
+        
+        # 如果不接近常见比例，返回简化后的比例
+        return self._format_aspect_ratio(width, height)
     
     def _format_aspect_ratio(self, width: int, height: int) -> str:
         """
