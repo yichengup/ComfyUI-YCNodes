@@ -161,12 +161,63 @@ class TextKeyword:
         
         return (result,)
 
+class TextBracketReplace:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "text": ("STRING", {"multiline": True, "default": ""}),
+                "start_char": ("STRING", {"multiline": False, "default": "("}),
+                "end_char": ("STRING", {"multiline": False, "default": ")"}),
+                "replace_with": ("STRING", {"multiline": False, "default": ""}),
+            },
+            "optional": {
+                "use_regex": ("BOOLEAN", {"default": True}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("text",)
+    FUNCTION = "replace_brackets"
+    CATEGORY = "YCNode/Text"
+
+    def replace_brackets(self, text, start_char, end_char, replace_with, use_regex=True):
+        import re
+        
+        def do_replace(txt, sc, ec):
+            if use_regex:
+                pattern = re.escape(sc) + r'.*?' + re.escape(ec)
+                return re.sub(pattern, replace_with, txt)
+            else:
+                while sc in txt and ec in txt:
+                    start = txt.find(sc)
+                    end = txt.find(ec, start)
+                    if end != -1:
+                        txt = txt[:start] + replace_with + txt[end+1:]
+                    else:
+                        break
+                return txt
+        
+        text = do_replace(text, start_char, end_char)
+        
+        pairs = {
+            "()": "（）", "[]": "［］", "{}": "｛｝", "<>": "＜＞",
+            "（）": "()", "［］": "[]", "｛｝": "{}", "＜＞": "<>"
+        }
+        key = start_char + end_char
+        if key in pairs:
+            cn_pair = pairs[key]
+            text = do_replace(text, cn_pair[0], cn_pair[1])
+        
+        return (text,)
+
 # 节点注册
 NODE_CLASS_MAPPINGS = {
     "YC_SingleTextNode": YC_SingleTextNode,
     "YC_FiveTextCombineNode": YC_FiveTextCombineNode,
     "YC_textReplaceNode": YC_textReplaceNode,
-    "TextKeyword": TextKeyword
+    "TextKeyword": TextKeyword,
+    "TextBracketReplace": TextBracketReplace,
 }
 
 # 节点显示名称
@@ -174,5 +225,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "YC_SingleTextNode": "YC text box",
     "YC_FiveTextCombineNode": "YC text box combine",
     "YC_textReplaceNode": "YC text replace",
-    "TextKeyword": "text keyword"
+    "TextKeyword": "text keyword",
+    "TextBracketReplace": "YC Text Bracket Replace",
 } 
