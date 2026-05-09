@@ -782,15 +782,18 @@ class YCMaskRatioPadCrop:
                 "fill_color": ("STRING", {"default": "#ffffff", "multiline": False}),
                 "extra_expand": ("INT", {"default": 0, "min": 0, "max": 2000, "step": 1}),
                 "padding_mode": (["center", "top", "bottom", "left", "right"], {"default": "center"}),
+            },
+            "optional": {
+                "inner_mask": ("MASK",),
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "MASK", "MASK")
-    RETURN_NAMES = ("image", "mask", "ratio_mask", "pad_mask")
+    RETURN_TYPES = ("IMAGE", "MASK", "MASK", "MASK", "MASK")
+    RETURN_NAMES = ("image", "mask", "ratio_mask", "pad_mask", "inner_mask")
     FUNCTION = "execute"
     CATEGORY = "YCNode/Mask"
 
-    def execute(self, image, mask, ratio, pad_mode, fill_color, extra_expand, padding_mode):
+    def execute(self, image, mask, ratio, pad_mode, fill_color, extra_expand, padding_mode, inner_mask=None):
         if image.shape[0] != mask.shape[0]:
             raise ValueError("image 与 mask 的 batch 大小需要一致")
 
@@ -798,6 +801,7 @@ class YCMaskRatioPadCrop:
         ret_masks = []
         ret_pad_masks = []
         ret_original_masks = []
+        ret_inner_masks = []
 
         for idx in range(image.shape[0]):
             img_tensor = image[idx]
@@ -806,20 +810,27 @@ class YCMaskRatioPadCrop:
             pil_img = tensor2pil(torch.unsqueeze(img_tensor, 0))
             mask_np = self._prepare_mask(mask_tensor)
 
-            processed_img, processed_mask, pad_mask_np, original_mask_np = self._process_single(
-                pil_img, mask_np, ratio, pad_mode, fill_color, extra_expand, padding_mode
+            inner_mask_np = None
+            if inner_mask is not None:
+                inner_idx = min(idx, inner_mask.shape[0] - 1)
+                inner_mask_np = self._prepare_mask(inner_mask[inner_idx])
+
+            processed_img, processed_mask, pad_mask_np, original_mask_np, processed_inner_mask_np = self._process_single(
+                pil_img, mask_np, ratio, pad_mode, fill_color, extra_expand, padding_mode, inner_mask_np
             )
 
             ret_images.append(pil2tensor(processed_img))
             ret_masks.append(torch.from_numpy(processed_mask).unsqueeze(0))
             ret_pad_masks.append(torch.from_numpy(pad_mask_np).unsqueeze(0))
             ret_original_masks.append(torch.from_numpy(original_mask_np).unsqueeze(0))
+            ret_inner_masks.append(torch.from_numpy(processed_inner_mask_np).unsqueeze(0))
 
         return (
             torch.cat(ret_images, dim=0),
             torch.cat(ret_original_masks, dim=0),
             torch.cat(ret_masks, dim=0),
             torch.cat(ret_pad_masks, dim=0),
+            torch.cat(ret_inner_masks, dim=0),
         )
 
     def _prepare_mask(self, mask_tensor):
@@ -828,9 +839,13 @@ class YCMaskRatioPadCrop:
             mask_np = mask_np[0]
         return mask_np.astype(np.float32)
 
-    def _process_single(self, image_pil, mask_np, ratio, pad_mode, fill_color, extra_expand, padding_mode):
+    def _process_single(self, image_pil, mask_np, ratio, pad_mode, fill_color, extra_expand, padding_mode, inner_mask_np=None):
         width, height = image_pil.size
         binary_mask = (mask_np > 0.5).astype(np.uint8)
+
+        if inner_mask_np is None:
+            inner_mask_np = np.zeros((height, width), dtype=np.float32)
+        padded_inner_mask = inner_mask_np.copy()
 
         coords = np.argwhere(binary_mask > 0)
         if coords.size == 0:
@@ -908,6 +923,12 @@ class YCMaskRatioPadCrop:
             )
             padded_mask = np.array(padded_mask_pil).astype(np.float32) / 255.0
 
+            inner_pil = Image.fromarray((padded_inner_mask * 255).astype(np.uint8), mode='L')
+            padded_inner_pil = smart_pad_image(
+                inner_pil, pad_left, pad_top, pad_right, pad_bottom, pad_mode='constant', fill_color='#000000'
+            )
+            padded_inner_mask = np.array(padded_inner_pil).astype(np.float32) / 255.0
+
         final_width, final_height = padded_image.size
 
         pad_indicator = np.zeros((final_height, final_width), dtype=np.float32)
@@ -979,11 +1000,24 @@ class YCMaskRatioPadCrop:
                 )
                 padded_mask = np.array(padded_mask_pil).astype(np.float32) / 255.0
 
+                inner_pil = Image.fromarray((padded_inner_mask * 255).astype(np.uint8), mode='L')
+                padded_inner_pil = smart_pad_image(
+                    inner_pil,
+                    extra_sides["left"],
+                    extra_sides["top"],
+                    extra_sides["right"],
+                    extra_sides["bottom"],
+                    pad_mode='constant',
+                    fill_color='#000000'
+                )
+                padded_inner_mask = np.array(padded_inner_pil).astype(np.float32) / 255.0
+
         ratio_mask = np.clip(ratio_mask, 0.0, 1.0)
         pad_indicator = np.clip(pad_indicator, 0.0, 1.0)
         padded_mask = np.clip(padded_mask, 0.0, 1.0)
+        padded_inner_mask = np.clip(padded_inner_mask, 0.0, 1.0)
 
-        return padded_image, ratio_mask, pad_indicator, padded_mask
+        return padded_image, ratio_mask, pad_indicator, padded_mask, padded_inner_mask
 
     def _compute_extra_padding(self, extra_expand, contact_left, contact_top, contact_right, contact_bottom):
         extra_expand = max(0, int(extra_expand))
