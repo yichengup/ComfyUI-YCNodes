@@ -81,6 +81,16 @@ class LoadImagesFromFolder:
                 image_files.extend([f for f in os.listdir(target_dir) 
                                     if os.path.isfile(os.path.join(target_dir, f)) and
                                     f.lower().endswith(f".{ext}")])
+        else:
+            # Handles custom wildcards, prefixes, and mid-string patterns safely
+            # 安全處理自訂通配符、前綴及字串中間的模式
+            import glob from glob
+            search_path = os.path.join(folder_path, pattern)
+            
+            # Filter to ensure we only pass valid files back to the node's list
+            # 進行過濾，確保僅將有效檔案傳回節點的清單
+            image_files.extend([f for f in glob(search_path) if os.path.isfile(f)])
+
         
         image_files = sorted(image_files)
         if not image_files:
